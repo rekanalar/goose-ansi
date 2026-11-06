@@ -1,5 +1,7 @@
 # goose-ansi
 
+[![ci](https://github.com/rekanalar/goose-ansi/actions/workflows/ci.yml/badge.svg)](https://github.com/rekanalar/goose-ansi/actions/workflows/ci.yml)
+
 Terminal styling for Goose: SGR sequences, colors, and width-aware measuring.
 
 ## Features
