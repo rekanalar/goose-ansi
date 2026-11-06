@@ -16,14 +16,14 @@ Terminal styling for Goose: SGR sequences, colors, and width-aware measuring.
 Put this line in the root file of your program:
 
 ```goose
-import ansi from "rekanalar/goose-ansi@v1";
+import ansi from "rekanalar/goose-ansi@v0.1.0";
 ```
 
 ## Example
 
 ```goose
 import std;
-import ansi from "rekanalar/goose-ansi@v1";
+import ansi from "rekanalar/goose-ansi@v0.1.0";
 
 fn main() {
     var line: u8[>..] = [];
