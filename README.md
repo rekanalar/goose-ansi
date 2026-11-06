@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/rekanalar/goose-ansi/actions/workflows/ci.yml/badge.svg)](https://github.com/rekanalar/goose-ansi/actions/workflows/ci.yml)
 
-Terminal styling for the Goose programming language: SGR sequences, colors, and width-aware measuring.
+Terminal styling for the [Goose](https://github.com/aardappel/goose) programming language: SGR sequences, colors, and width-aware measuring.
 
 ## Features
 
