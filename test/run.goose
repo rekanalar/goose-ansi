@@ -77,6 +77,20 @@ fn test_strip() {
     ansi::strip(out3, "plain");
     expect(out3, "plain", "strip plain");
 
+    // A UTF-8 sequence cut at the end of the text.
+    var cut: u8[>..] = [];
+    ansi::strip(cut, "\xe6\xbc");
+    expect(cut, "\xe6\xbc", "strip truncated utf8");
+
+    var cut2: u8[>..] = [];
+    ansi::truncate(cut2, "\xe6\xbc", 2);
+    expect(cut2, "\xe6\xbc", "truncate truncated utf8");
+
+    // An escape sequence without an end.
+    var open: u8[>..] = [];
+    ansi::strip(open, "\x1b[31");
+    expect(open, "\x1b[31", "strip open escape");
+
     // Another kind of escape stays.
     var out4: u8[>..] = [];
     ansi::strip(out4, "\x1b[2Jx");

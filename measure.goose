@@ -52,7 +52,8 @@ fn len(s: u8[:]) -> i64 {
             continue;
         }
         let cp = decode_utf8(text, i);
-        let size = utf8_size(b);
+        var size = utf8_size(b);
+        if i + size > text.len { size = text.len - i; }
         n += char_width(cp);
         i += size;
     }
@@ -134,6 +135,8 @@ fn truncate(out: u8[>..]&, s: u8[:], width: i64) {
         if b >= 0x80 {
             let cp = decode_utf8(s, i);
             size = utf8_size(b);
+            // A sequence cut at the end of the text has fewer bytes.
+            if i + size > s.len { size = s.len - i; }
             w = char_width(cp);
         }
         if columns + w > width {
