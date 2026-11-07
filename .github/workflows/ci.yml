@@ -55,6 +55,17 @@ jobs:
         env:
           GOOSE_HOME: ${{ runner.temp }}/goose-home
 
+      - name: Run the tests in the debug build
+        timeout-minutes: 5
+        run: goose run test/run.goose --debug
+        env:
+          GOOSE_HOME: ${{ runner.temp }}/goose-home
+
+      - name: Run the examples
+        run: goose run examples/demo.goose
+        env:
+          GOOSE_HOME: ${{ runner.temp }}/goose-home
+
       - name: Report the failure
         if: failure()
         run: |
