@@ -35,6 +35,8 @@ fn italic(out: u8[>..]&, text: u8[:])    { style(out, text, [3]); }
 fn underline(out: u8[>..]&, text: u8[:]) { style(out, text, [4]); }
 fn reverse(out: u8[>..]&, text: u8[:])   { style(out, text, [7]); }
 fn strike(out: u8[>..]&, text: u8[:])    { style(out, text, [9]); }
+fn overline(out: u8[>..]&, text: u8[:])  { style(out, text, [53]); }
+fn hidden(out: u8[>..]&, text: u8[:])    { style(out, text, [8]); }
 
 fn black(out: u8[>..]&, text: u8[:])   { style(out, text, [30]); }
 fn red(out: u8[>..]&, text: u8[:])     { style(out, text, [31]); }

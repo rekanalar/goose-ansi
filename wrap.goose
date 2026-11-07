@@ -32,19 +32,20 @@ fn sgr_codes(params: u8[:], codes: i64[>..<]&) {
         let v = parsed[k];
         if v == 0 {
             while codes.len > 0 { codes.pop(); }
-        } else if v == 38 || v == 48 {
+        } else if v == 38 || v == 48 || v == 58 {
             // The colour that follows takes more codes. The old colour of
             // the same kind goes away.
             while codes.len > 0 {
                 let last = codes[codes.len - 1];
-                if last == 38 || last == 48 || last == 5 || last == 2 { codes.pop(); } else { break; }
+                if last == 38 || last == 48 || last == 58 || last == 5 || last == 2 { codes.pop(); } else { break; }
             }
             codes.push(v);
-            // The kind of the colour: 5 for the palette, 2 for RGB.
+            // The kind of the colour: 5 for the palette, 2 for RGB. The test
+            // reads the kind, so an RGB colour takes three values.
             if k + 1 < parsed.len { codes.push(parsed[k + 1]); k += 1; }
             // The values of the colour follow.
             var want = 1;
-            if k + 1 < parsed.len && parsed[k + 1] == 2 { want = 3; }
+            if parsed[k] == 2 { want = 3; }
             var got = 0;
             while got < want && k + 1 < parsed.len {
                 k += 1;

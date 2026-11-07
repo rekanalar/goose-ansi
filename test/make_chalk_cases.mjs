@@ -1,0 +1,211 @@
+// Makes test/chalk_cases.goose for goose-ansi from chalk 6.0.1.
+//
+// Usage, in the package directory, with chalk 6.0.1 installed in CHALK_DIR:
+//   CHALK_DIR=/path/to/dir node test/make_chalk_cases.mjs > test/chalk_cases.goose
+//
+// Every case holds the result that chalk gave. The Goose test compares the
+// result of the package with it. The seed is fixed, so the output is stable.
+// The count of cases goes to standard error.
+import {createRequire} from 'node:module';
+import {pathToFileURL} from 'node:url';
+
+const dir = process.env.CHALK_DIR;
+if (!dir) throw new Error('set CHALK_DIR');
+const chalkUrl = pathToFileURL(dir + '/node_modules/chalk/source/index.js').href;
+const scUrl = pathToFileURL(dir + '/node_modules/chalk/source/vendor/supports-color/index.js').href;
+const {Chalk} = await import(chalkUrl);
+void createRequire;
+
+let state = 20261107;
+function rnd() {
+  state = (state + 0x6D2B79F5) | 0;
+  let t = Math.imul(state ^ (state >>> 15), 1 | state);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const int = (n) => Math.floor(rnd() * n);
+const pick = (a) => a[int(a.length)];
+
+// The package closes every sequence with ESC[0m. chalk closes with the reset
+// of the one attribute (ESC[55m, ESC[28m, ESC[59m). The test swaps the close.
+const close0 = (s) => s.replace(/\u001b\[(?:55|28|59|39|49)m$/, '\u001b[0m');
+
+// A Goose string literal. Only the escape byte needs care: it goes out as \x1b.
+const q = (s) => '"' + s.replace(/\u001b/g, '\\x1b') + '"';
+
+const out = [];
+const w = (s) => out.push(s);
+const count = {modifier: 0, color: 0, lower: 0, hex: 0, hexbad: 0, level: 0};
+
+w('// Cases made by test/make_chalk_cases.mjs with chalk 6.0.1.');
+w('// Do not edit by hand. Make the file again with the script.');
+w('');
+w('namespace chalk_cases;');
+w('');
+w('import std;');
+w('import ansi from "..";');
+w('');
+w('fn same(got: u8[>..]&, want: const u8[:]) {');
+w('    if got[..] != want { print("FAIL got ", got[..], " want ", want); }');
+w('    assert(got[..] == want);');
+w('}');
+w('');
+w('fn modifier_case(want_overline: const u8[:], want_hidden: const u8[:]) {');
+w('    var o: u8[>..] = [];');
+w('    ansi::overline(o, "x");');
+w('    same(o, want_overline);');
+w('    o = [];');
+w('    ansi::hidden(o, "x");');
+w('    same(o, want_hidden);');
+w('}');
+w('');
+w('fn color_case(r: i64, g: i64, b: i64, n: i64, level: i64, want_rgb: const u8[:], want_256: const u8[:]) {');
+w('    var o: u8[>..] = [];');
+w('    ansi::underline_rgb_at(o, "x", r, g, b, level);');
+w('    same(o, want_rgb);');
+w('    o = [];');
+w('    ansi::underline_color256_at(o, "x", n, level);');
+w('    same(o, want_256);');
+w('}');
+w('');
+w('fn hex_case(text: const u8[:], level: i64, want_fg: const u8[:], want_bg: const u8[:], want_ul: const u8[:]) {');
+w('    var o: u8[>..] = [];');
+w('    assert(ansi::hex_at(o, "x", text, level));');
+w('    same(o, want_fg);');
+w('    o = [];');
+w('    assert(ansi::bg_hex_at(o, "x", text, level));');
+w('    same(o, want_bg);');
+w('    o = [];');
+w('    assert(ansi::underline_hex_at(o, "x", text, level));');
+w('    same(o, want_ul);');
+w('}');
+w('');
+w('fn lower_case(n: i64, r: i64, g: i64, b: i64, level: i64, want_n: const u8[:], want_bg_n: const u8[:], want_rgb: const u8[:], want_bg_rgb: const u8[:]) {');
+w('    var o: u8[>..] = [];');
+w('    ansi::color256_at(o, "x", n, level);');
+w('    same(o, want_n);');
+w('    o = [];');
+w('    ansi::bg_color256_at(o, "x", n, level);');
+w('    same(o, want_bg_n);');
+w('    o = [];');
+w('    ansi::truecolor_at(o, "x", r, g, b, level);');
+w('    same(o, want_rgb);');
+w('    o = [];');
+w('    ansi::bg_truecolor_at(o, "x", r, g, b, level);');
+w('    same(o, want_bg_rgb);');
+w('}');
+w('');
+w('fn hexbad_case(text: const u8[:]) {');
+w('    var o: u8[>..] = [];');
+w('    assert(!ansi::hex_at(o, "x", text, 3));');
+w('    assert(!ansi::bg_hex_at(o, "x", text, 3));');
+w('    assert(!ansi::underline_hex_at(o, "x", text, 3));');
+w('    assert(o.len == 0);');
+w('}');
+w('');
+w('fn level_case(tty: bool, force: const u8[:], term: const u8[:], colorterm: const u8[:], want: i64) {');
+w('    assert(ansi::color_level_tty(tty, false, term, colorterm, force) == want);');
+w('}');
+w('');
+
+// Modifiers: the sequence is the same at levels 1 to 3.
+w('fn check_modifiers() {');
+{
+  const c = new Chalk({level: 1});
+  w(`    modifier_case(${q(close0(c.overline('x')))}, ${q(close0(c.hidden('x')))});`);
+  count.modifier++;
+}
+w('}');
+w('');
+
+// Underline colours from numbers, at every level.
+w('fn check_colors() {');
+const RGB_CORNERS = [[0,0,0],[255,255,255],[255,136,0],[128,128,128],[1,2,3],[255,0,0],[0,255,0],[0,0,255]];
+for (let i = 0; i < 160; i++) {
+  const [r, g, b] = i < RGB_CORNERS.length ? RGB_CORNERS[i] : [int(256), int(256), int(256)];
+  const n = i < 20 ? i * 13 % 256 : int(256);
+  const level = 1 + (i % 3);
+  const c = new Chalk({level});
+  w(`    color_case(${r}, ${g}, ${b}, ${n}, ${level}, ${q(close0(c.underlineRgb(r, g, b)('x')))}, ${q(close0(c.underlineAnsi256(n)('x')))});`);
+  count.color++;
+}
+w('}');
+w('');
+
+// The lowering of the plain foreground and background writers. Every palette
+// number runs at the levels 1 and 2. The colours are random.
+w('fn check_lowering() {');
+for (let n = 0; n < 256; n++) {
+  const level = 1 + (n % 2);
+  const c = new Chalk({level});
+  const r = int(256), g = int(256), b = int(256);
+  w(`    lower_case(${n}, ${r}, ${g}, ${b}, ${level}, ${q(close0(c.ansi256(n)('x')))}, ${q(close0(c.bgAnsi256(n)('x')))}, ${q(close0(c.rgb(r, g, b)('x')))}, ${q(close0(c.bgRgb(r, g, b)('x')))});`);
+  count.lower++;
+}
+for (let n = 0; n < 256; n++) {
+  const c = new Chalk({level: 1});
+  const r = int(256), g = int(256), b = int(256);
+  w(`    lower_case(${n}, ${r}, ${g}, ${b}, 1, ${q(close0(c.ansi256(n)('x')))}, ${q(close0(c.bgAnsi256(n)('x')))}, ${q(close0(c.rgb(r, g, b)('x')))}, ${q(close0(c.bgRgb(r, g, b)('x')))});`);
+  count.lower++;
+}
+w('}');
+w('');
+
+// Hex strings that chalk and the package both accept.
+const DIGITS = '0123456789abcdefABCDEF';
+const hexDigits = (k) => Array.from({length: k}, () => DIGITS[int(DIGITS.length)]).join('');
+w('fn check_hex() {');
+for (let i = 0; i < 120; i++) {
+  const text = (rnd() < 0.5 ? '#' : '') + hexDigits(rnd() < 0.5 ? 3 : 6);
+  const level = 1 + (i % 3);
+  const c = new Chalk({level});
+  w(`    hex_case(${q(text)}, ${level}, ${q(close0(c.hex(text)('x')))}, ${q(close0(c.bgHex(text)('x')))}, ${q(close0(c.underlineHex(text)('x')))});`);
+  count.hex++;
+}
+w('}');
+w('');
+
+// Strings that the package refuses. Chalk reads some of them as black or
+// as the first match, so no chalk result is compared.
+w('fn check_hex_bad() {');
+for (const text of ['', '#', 'zz', '#ff88', '#ff88001', 'gg0000', '#12', '12345', '#1234567', ' fff', '#ff 88', '0xff8800', '#ff880g', '##fff']) {
+  w(`    hexbad_case(${q(text)});`);
+  count.hexbad++;
+}
+w('}');
+w('');
+
+// The level rules. Each case sets an environment for chalk and reads the level.
+const KEYS = ['FORCE_COLOR','TERM','COLORTERM','CI','GITHUB_ACTIONS','GITEA_ACTIONS','CIRCLECI','TRAVIS','APPVEYOR','GITLAB_CI','BUILDKITE','DRONE','CI_NAME','TF_BUILD','AGENT_NAME','TEAMCITY_VERSION','TERM_PROGRAM','TERM_PROGRAM_VERSION'];
+let n = 0;
+async function chalkLevel(env, tty) {
+  for (const k of KEYS) delete process.env[k];
+  Object.assign(process.env, env);
+  const m = await import(scUrl + '?c=' + (n++));
+  const r = m.createSupportsColor({isTTY: tty});
+  return r ? r.level : 0;
+}
+const FORCES = [undefined, '0', '1', '2', '3', '4', '10', 'true', 'false', 'abc', '-1', '2x'];
+const TERMS = [undefined, 'dumb', 'xterm', 'xterm-256color', 'screen', 'screen-256color', 'vt100', 'linux', 'rxvt-unicode', 'foo', 'xterm-kitty', 'xterm-ghostty', 'wezterm', 'ansi', 'tmux-256color', 'XTERM-256COLOR', 'x-256', 'cygwin'];
+const COLORTERMS = [undefined, 'truecolor', '1', 'yes'];
+w('fn check_levels() {');
+const seen = new Set();
+while (seen.size < 400) {
+  const f = pick(FORCES), t = pick(TERMS), ct = pick(COLORTERMS), tty = rnd() < 0.7;
+  const key = JSON.stringify([f, t, ct, tty]);
+  if (seen.has(key)) continue;
+  seen.add(key);
+  const env = {};
+  if (f !== undefined) env.FORCE_COLOR = f;
+  if (t !== undefined) env.TERM = t;
+  if (ct !== undefined) env.COLORTERM = ct;
+  const want = await chalkLevel(env, tty);
+  w(`    level_case(${tty}, ${q(f ?? '')}, ${q(t ?? '')}, ${q(ct ?? '')}, ${want});`);
+  count.level++;
+}
+w('}');
+
+const total = Object.values(count).reduce((a, b) => a + b, 0);
+out.splice(1, 0, '// Cases: ' + JSON.stringify(count) + ', total ' + total + '.');
+process.stdout.write(out.join('\n') + '\n');
+process.stderr.write('cases: ' + JSON.stringify(count) + ' total=' + total + '\n');

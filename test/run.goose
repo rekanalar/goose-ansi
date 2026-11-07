@@ -5,6 +5,8 @@
 
 import std;
 import ansi from "..";
+import chalk_cases;
+import os;
 
 // expect checks that out holds the bytes.
 fn expect(out: u8[>..]&, want: u8[:], what: u8[:]) {
@@ -242,7 +244,9 @@ fn test_color_level() {
     assert(ansi::color_level_with(false, "dumb", "", "") == 0);
     assert(ansi::color_level_with(true, "xterm", "", "2") == 2);
     assert(ansi::color_level_with(false, "xterm-256color", "", "0") == 0);
-    assert(ansi::color_level_with(false, "xterm-256color", "", "true") == 1);
+    // 0.2.0 gave 1. FORCE_COLOR=true sets a minimum of 1 and then detects, as chalk does.
+    assert(ansi::color_level_with(false, "xterm-256color", "", "true") == 2);
+    assert(ansi::color_level_with(false, "xterm", "", "true") == 1);
 }
 
 fn test_link() {
@@ -331,6 +335,116 @@ fn test_wrap() {
     expect(out9, "\x1b[31ma \x1b[32mb\x1b[0m\n\x1b[32mc", "wrap colour replace");
 }
 
+// test_chalk_gaps holds the hand cases for the modifiers, the underline
+// colour, the hex strings and the level rules of chalk 6.0.1.
+fn test_chalk_gaps() {
+    var o: u8[>..] = [];
+    ansi::overline(o, "x");
+    expect(o, "\x1b[53mx\x1b[0m", "overline");
+    o = [];
+    ansi::hidden(o, "x");
+    expect(o, "\x1b[8mx\x1b[0m", "hidden");
+    // The plain underline writers do not lower.
+    o = [];
+    ansi::underline_rgb(o, "x", 255, 136, 0);
+    expect(o, "\x1b[58;2;255;136;0mx\x1b[0m", "underline_rgb");
+    o = [];
+    ansi::underline_color256(o, "x", 200);
+    expect(o, "\x1b[58;5;200mx\x1b[0m", "underline_color256");
+    // A value outside the range clamps.
+    o = [];
+    ansi::underline_rgb(o, "x", 300, -5, 2);
+    expect(o, "\x1b[58;2;255;0;2mx\x1b[0m", "underline_rgb clamp");
+    o = [];
+    ansi::underline_color256(o, "x", 300);
+    expect(o, "\x1b[58;5;255mx\x1b[0m", "underline_color256 clamp");
+    o = [];
+    ansi::underline_color256(o, "x", -3);
+    expect(o, "\x1b[58;5;0mx\x1b[0m", "underline_color256 clamp low");
+    // Level 0 writes the plain text.
+    o = [];
+    ansi::underline_rgb_at(o, "x", 1, 2, 3, 0);
+    expect(o, "x", "underline_rgb_at level 0");
+    o = [];
+    assert(ansi::hex_at(o, "x", "#ff8800", 0));
+    expect(o, "x", "hex_at level 0");
+    // The plain hex writers write the truecolor form.
+    o = [];
+    assert(ansi::hex(o, "x", "#f80"));
+    expect(o, "\x1b[38;2;255;136;0mx\x1b[0m", "hex");
+    o = [];
+    assert(ansi::bg_hex(o, "x", "FF8800"));
+    expect(o, "\x1b[48;2;255;136;0mx\x1b[0m", "bg_hex");
+    o = [];
+    assert(ansi::underline_hex(o, "x", "f80"));
+    expect(o, "\x1b[58;2;255;136;0mx\x1b[0m", "underline_hex");
+    // A bad string gives false and writes nothing.
+    o = [];
+    assert(!ansi::hex(o, "x", "##fff"));
+    assert(!ansi::bg_hex(o, "x", "#ff88"));
+    assert(!ansi::underline_hex(o, "x", ""));
+    assert(o.len == 0);
+
+    // wrap keeps an underline colour over a line break, with a zero or a
+    // 31 in the parts of the colour.
+    var uw: u8[>..] = [];
+    ansi::underline_rgb(uw, "aa bb", 255, 0, 31);
+    var wrapped: u8[>..] = [];
+    ansi::wrap(wrapped, uw[..], 3, false);
+    expect(wrapped, "\x1b[58;2;255;0;31maa\x1b[0m\n\x1b[58;2;255;0;31mbb\x1b[0m", "wrap underline rgb");
+    var uw2: u8[>..] = [];
+    ansi::underline_color256(uw2, "aa bb", 0);
+    wrapped = [];
+    ansi::wrap(wrapped, uw2[..], 3, false);
+    expect(wrapped, "\x1b[58;5;0maa\x1b[0m\n\x1b[58;5;0mbb\x1b[0m", "wrap underline palette");
+
+    // The same for a truecolor foreground. Version 0.2.0 read the zero as a
+    // reset and the 31 as a red foreground.
+    var tw: u8[>..] = [];
+    ansi::truecolor(tw, "aa bb", 255, 0, 31);
+    wrapped = [];
+    ansi::wrap(wrapped, tw[..], 3, false);
+    expect(wrapped, "\x1b[38;2;255;0;31maa\x1b[0m\n\x1b[38;2;255;0;31mbb\x1b[0m", "wrap truecolor zero");
+    var bw: u8[>..] = [];
+    ansi::bg_truecolor(bw, "aa bb", 0, 0, 0);
+    wrapped = [];
+    ansi::wrap(wrapped, bw[..], 3, false);
+    expect(wrapped, "\x1b[48;2;0;0;0maa\x1b[0m\n\x1b[48;2;0;0;0mbb\x1b[0m", "wrap bg truecolor black");
+
+    // The level rules.
+    assert(ansi::color_level_tty(true, true, "xterm-256color", "", "") == 0);
+    assert(ansi::color_level_tty(true, true, "xterm-256color", "", "2") == 2);
+    assert(ansi::color_level_tty(true, false, "xterm", "24bit", "") == 3);
+    assert(ansi::color_level_tty(true, false, "xterm", "", "4") == 3);
+    assert(ansi::color_level_tty(true, false, "xterm", "", "10") == 3);
+    assert(ansi::color_level_tty(true, false, "xterm-256color", "", "true") == 2);
+    assert(ansi::color_level_tty(false, false, "xterm-256color", "", "") == 0);
+    assert(ansi::color_level_tty(false, false, "xterm-256color", "", "1") == 1);
+    assert(ansi::color_level_tty(true, false, "", "", "") == 0);
+    assert(ansi::color_level_tty(true, false, "xterm", "", "abc") == 1);
+    // An empty force means not set, so a pipe gives 0.
+    assert(ansi::color_level_tty(false, false, "xterm", "", "") == 0);
+    assert(ansi::color_level_with(false, "xterm-256color", "", "true") == 2);
+    assert(ansi::color_level_with(false, "xterm", "", "4") == 3);
+    // A long force string is read in one pass.
+    var long_force: u8[>..] = [];
+    for i in 0..10000 { long_force.push('7'); }
+    let t0 = clock_ns();
+    assert(ansi::color_level_tty(true, false, "xterm", "", long_force[..]) == 3);
+    var long_hex: u8[>..] = [];
+    for i in 0..100000 { long_hex.push('f'); }
+    var lo: u8[>..] = [];
+    assert(!ansi::hex(lo, "x", long_hex[..]));
+    assert(clock_ns() - t0 < 1000000000);
+    // The stream level reads the environment. With a terminal it equals
+    // color_level. Without one it is 0 unless FORCE_COLOR is set.
+    assert(ansi::color_level_stream(true) == ansi::color_level());
+    var force: u8[>..] = [];
+    if !env("FORCE_COLOR", force) {
+        assert(ansi::color_level_stream(false) == 0);
+    }
+}
+
 fn main() {
     test_attributes();
     test_colors();
@@ -346,6 +460,13 @@ fn main() {
     test_link();
     test_ellipsis();
     test_wrap();
+    test_chalk_gaps();
+    chalk_cases::check_modifiers();
+    chalk_cases::check_colors();
+    chalk_cases::check_lowering();
+    chalk_cases::check_hex();
+    chalk_cases::check_hex_bad();
+    chalk_cases::check_levels();
     print("all tests passed");
     return 0;
 }

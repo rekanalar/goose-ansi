@@ -30,7 +30,7 @@ fn rgb_to_256(r: i64, g: i64, b: i64) -> i64 {
 }
 
 // to_16 returns the SGR foreground code nearest to the palette entry n.
-// The rule is ansi256ToAnsi of ansi-styles.
+// The rule is ansi256ToAnsi of ansi-styles, with its exact test for the bright code.
 fn to_16(n: i64) -> i64 {
     let c = clamp255(n);
     if c < 8 { return 30 + c; }
@@ -52,10 +52,11 @@ fn to_16(n: i64) -> i64 {
     var top = rc;
     if gc > top { top = gc; }
     if bc > top { top = bc; }
-    let value = round_div(top * 2, 255);
-    if value == 0 { return 30; }
+    if top == 0 { return 30; }
     let code = 30 + ((round_div(bc, 255) << 2) | (round_div(gc, 255) << 1) | round_div(rc, 255));
-    if value == 2 { return code + 60; }
+    // ansi-styles tests value === 2 with no rounding. Only a full component
+    // gives the bright code. A light gray from the gray ramp does not.
+    if top == 255 { return code + 60; }
     return code;
 }
 
@@ -100,6 +101,98 @@ fn bg_truecolor_at(out: u8[>..]&, text: u8[:], r: i64, g: i64, b: i64, level: i6
     if level == 2 { styled_at(out, text, [48, 5, rgb_to_256(r, g, b)], level); return; }
     styled_at(out, text, [rgb_to_16(r, g, b) + 10], level);
 }
+
+// idx16 turns an SGR foreground code of the 16 colour set into the colour
+// index 0 to 15 that the codes 58;5 and 38;5 take.
+fn idx16(code: i64) -> i64 {
+    if code < 90 { return code - 30; }
+    return code - 82;
+}
+
+// underline_rgb writes the text with an underline in the colour. It does
+// not lower the colour. chalk 6 calls it underlineRgb.
+fn underline_rgb(out: u8[>..]&, text: u8[:], r: i64, g: i64, b: i64) {
+    style(out, text, [58, 2, clamp255(r), clamp255(g), clamp255(b)]);
+}
+
+// underline_color256 writes the text with an underline in the palette
+// colour n. chalk 6 calls it underlineAnsi256.
+fn underline_color256(out: u8[>..]&, text: u8[:], n: i64) {
+    style(out, text, [58, 5, clamp255(n)]);
+}
+
+// underline_rgb_at writes the underline colour, lowered to the level.
+fn underline_rgb_at(out: u8[>..]&, text: u8[:], r: i64, g: i64, b: i64, level: i64) {
+    if level >= 3 { styled_at(out, text, [58, 2, clamp255(r), clamp255(g), clamp255(b)], level); return; }
+    if level == 2 { styled_at(out, text, [58, 5, rgb_to_256(r, g, b)], level); return; }
+    styled_at(out, text, [58, 5, idx16(rgb_to_16(r, g, b))], level);
+}
+
+// underline_color256_at writes the underline palette colour n, lowered to
+// the level.
+fn underline_color256_at(out: u8[>..]&, text: u8[:], n: i64, level: i64) {
+    let c = clamp255(n);
+    if level >= 2 { styled_at(out, text, [58, 5, c], level); return; }
+    styled_at(out, text, [58, 5, idx16(to_16(c))], level);
+}
+
+// hex_digit gives the value of one hex digit, or -1.
+fn hex_digit(c: u8) -> i64 {
+    if c >= '0' && c <= '9' { return c - '0'; }
+    if c >= 'a' && c <= 'f' { return c - 'a' + 10; }
+    if c >= 'A' && c <= 'F' { return c - 'A' + 10; }
+    return -1;
+}
+
+// parse_hex reads a colour from three or six hex digits, after at most one
+// "#". It gives the parts and true, or zeros and false for any other text.
+// chalk reads other text as black, or as the first match. This package
+// refuses it.
+fn parse_hex(s: u8[:]) -> i64, i64, i64, bool {
+    var start = 0;
+    if s.len > 0 && s[0] == '#' { start = 1; }
+    let n = s.len - start;
+    if n != 3 && n != 6 { return 0, 0, 0, false; }
+    var v: i64[6] = [0, 0, 0, 0, 0, 0];
+    for i in 0..n {
+        let d = hex_digit(s[start + i]);
+        if d < 0 { return 0, 0, 0, false; }
+        v[i] = d;
+    }
+    if n == 3 { return v[0] * 17, v[1] * 17, v[2] * 17, true; }
+    return v[0] * 16 + v[1], v[2] * 16 + v[3], v[4] * 16 + v[5], true;
+}
+
+// hex_at writes the text in the colour of the hex string, lowered to the
+// level. It gives false and writes nothing for a bad string.
+fn hex_at(out: u8[>..]&, text: u8[:], s: u8[:], level: i64) -> bool {
+    let r, g, b, ok = parse_hex(s);
+    if !ok { return false; }
+    truecolor_at(out, text, r, g, b, level);
+    return true;
+}
+
+// bg_hex_at writes the text on the colour of the hex string.
+fn bg_hex_at(out: u8[>..]&, text: u8[:], s: u8[:], level: i64) -> bool {
+    let r, g, b, ok = parse_hex(s);
+    if !ok { return false; }
+    bg_truecolor_at(out, text, r, g, b, level);
+    return true;
+}
+
+// underline_hex_at writes the text with an underline in the colour of the
+// hex string.
+fn underline_hex_at(out: u8[>..]&, text: u8[:], s: u8[:], level: i64) -> bool {
+    let r, g, b, ok = parse_hex(s);
+    if !ok { return false; }
+    underline_rgb_at(out, text, r, g, b, level);
+    return true;
+}
+
+// hex, bg_hex and underline_hex write the truecolor form. They do not lower.
+fn hex(out: u8[>..]&, text: u8[:], s: u8[:]) -> bool { return hex_at(out, text, s, 3); }
+fn bg_hex(out: u8[>..]&, text: u8[:], s: u8[:]) -> bool { return bg_hex_at(out, text, s, 3); }
+fn underline_hex(out: u8[>..]&, text: u8[:], s: u8[:]) -> bool { return underline_hex_at(out, text, s, 3); }
 
 // The bright set of the 16 colours.
 fn bright_black(out: u8[>..]&, text: u8[:])   { style(out, text, [90]); }

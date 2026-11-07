@@ -82,7 +82,20 @@ fn main() {
     var linked: u8[>..] = [];
     ansi::link_with(linked, "goose", "https://github.com/aardappel/goose", ansi::links_supported());
     print(linked);
-    print("colour level: ", ansi::color_level());
+    // Overline, hidden, an underline colour and a hex colour.
+    let level = ansi::color_level();
+    var extra: u8[>..] = [];
+    ansi::overline(extra, "overline ");
+    ansi::underline_rgb_at(extra, "coloured underline ", 255, 136, 0, level);
+    if !ansi::hex_at(extra, "hex colour", "#ff8800", level) {
+        print("bad hex string");
+    }
+    print(extra);
+    // A bad hex string gives false and writes nothing.
+    var bad: u8[>..] = [];
+    assert(!ansi::hex(bad, "x", "#ff88"));
+    assert(bad.len == 0);
+    print("colour level: ", level, ", for a pipe: ", ansi::color_level_stream(false));
 
     // The capability check.
     if ansi::enabled() {
