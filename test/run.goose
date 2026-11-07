@@ -6,6 +6,7 @@
 import std;
 import ansi from "..";
 import chalk_cases;
+import support_cases;
 import os;
 
 // expect checks that out holds the bytes.
@@ -249,6 +250,35 @@ fn test_color_level() {
     assert(ansi::color_level_with(false, "xterm", "", "true") == 1);
 }
 
+fn test_support_cases() {
+    support_cases::check_support();
+}
+
+fn test_detect_rules() {
+    var e = ansi::empty_color_env();
+    ansi::color_env_set(e, "TERM", "xterm");
+    ansi::color_env_set(e, "CI", "1");
+    ansi::color_env_set(e, "GITHUB_ACTIONS", "1");
+    let none = ansi::color_flags([]);
+    assert(ansi::color_level_env(true, e, none) == 3);
+    var t = ansi::empty_color_env();
+    ansi::color_env_set(t, "TERM", "xterm");
+    ansi::color_env_set(t, "TEAMCITY_VERSION", "9.1.0");
+    assert(ansi::color_level_env(true, t, none) == 1);
+    ansi::color_env_set(t, "TEAMCITY_VERSION", "8.1");
+    assert(ansi::color_level_env(true, t, none) == 0);
+    var z = ansi::empty_color_env();
+    ansi::color_env_set(z, "TERM", "xterm");
+    ansi::color_env_set(z, "FORCE_COLOR", "");
+    assert(ansi::color_level_env(true, z, none) == 1);
+    let no = ansi::color_flags(["x", "--no-color"]);
+    assert(no.force == 0);
+    let after = ansi::color_flags(["x", "--", "--no-color"]);
+    assert(after.force == -1);
+    let c256 = ansi::color_flags(["x", "--color=256"]);
+    assert(c256.exact == 2);
+}
+
 fn test_link() {
     var out: u8[>..] = [];
     ansi::link(out, "site", "https://a.b");
@@ -457,6 +487,8 @@ fn main() {
     test_bright();
     test_levels();
     test_color_level();
+    test_detect_rules();
+    test_support_cases();
     test_link();
     test_ellipsis();
     test_wrap();

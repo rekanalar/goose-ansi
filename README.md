@@ -24,14 +24,14 @@ Terminal styling for the [Goose](https://github.com/aardappel/goose) programming
 Put this line in the root file of your program:
 
 ```goose
-import ansi from "rekanalar/goose-ansi@v0.3.0";
+import ansi from "rekanalar/goose-ansi@v0.4.0";
 ```
 
 ## Example
 
 ```goose
 import std;
-import ansi from "rekanalar/goose-ansi@v0.3.0";
+import ansi from "rekanalar/goose-ansi@v0.4.0";
 
 fn main() {
     var line: u8[>..] = [];
@@ -63,7 +63,10 @@ fn main() {
 | `hex(out, text, s)`, `bg_hex`, `underline_hex` | the text in the colour of a hex string; give false for a bad string |
 | `hex_at(out, text, s, level)`, `bg_hex_at`, `underline_hex_at` | the same, lowered to the level |
 | `color_level()` | the level of the terminal, 0 to 3 |
-| `color_level_stream(is_tty)` | the level for a stream; the caller says whether it is a terminal |
+| `color_level_stream(is_tty)` | the level for a stream; reads the environment and the program arguments; the caller says whether it is a terminal |
+| `color_level_env(is_tty, env, flags)` | the level for a `ColorEnv` and a `ColorFlags`, by the rules of `supports-color` |
+| `read_color_env()`, `color_env_set(env, name, value)`, `empty_color_env()` | build a `ColorEnv` from the process or by hand |
+| `color_flags(args)` | the `--color` and `--no-color` flags of an argument list; an argument after `--` has no effect |
 | `color_level_tty(is_tty, no_color, term, colorterm, force)` | the level for given inputs |
 | `strip(out, s)` | s without its CSI and OSC sequences |
 | `len(s)` | the visible length in columns |
@@ -91,19 +94,27 @@ themselves, so the caller decides.
 `color_level()` follows chalk 6: 0 none, 1 sixteen colours, 2 the 256 palette,
 3 truecolor. The order of the rules is that of `supports-color` in chalk 6.0.1.
 
-- `FORCE_COLOR` of `false` or `0` gives 0. A number gives that number, at most 3.
+- `FORCE_COLOR` of `false` or `0` gives 0, and so do `--no-color`, `--no-colors`, `--color=false` and `--color=never`. `FORCE_COLOR` wins over the flags.
+- `--color=16m`, `--color=full` and `--color=truecolor` give 3. `--color=256` gives 2.
+- A number in `FORCE_COLOR` gives that number, at most 3.
 - `FORCE_COLOR=true` sets a minimum of 1 and then detects the level.
-- Another value of `FORCE_COLOR` has no effect.
-- Without `FORCE_COLOR`, `NO_COLOR` gives 0, and so does a stream that is not a terminal.
+- An empty `FORCE_COLOR` sets a minimum of 1 and then detects the level.
+- The flags `--color`, `--colors`, `--color=true` and `--color=always` set a minimum of 1 and then detect the level.
+- An argument after `--` is not a flag.
+- `TF_BUILD` and `AGENT_NAME` together give 1, even on a pipe.
+- Without a force value, `NO_COLOR` gives 0, and so does a stream that is not a terminal.
 - `TERM=dumb` gives the minimum.
+- With `CI` set: `GITHUB_ACTIONS`, `GITEA_ACTIONS` or `CIRCLECI` gives 3. `TRAVIS`, `APPVEYOR`, `GITLAB_CI`, `BUILDKITE`, `DRONE` or `CI_NAME=codeship` gives 1. Else the minimum.
+- `TEAMCITY_VERSION` gives 1 when the version starts with `9.`, then zeros, then a digit 1 to 9, then a dot. Else it gives 0. The version `9.1.0` gives 1. The version `9.0.1` gives 0.
 - `COLORTERM=truecolor` or `24bit`, or `TERM` of `xterm-kitty`, `xterm-ghostty` or `wezterm`, gives 3.
+- `TERM_PROGRAM=iTerm.app` gives 3 from version 3, else 2. `Apple_Terminal` gives 2.
 - A `TERM` that ends with `-256` or `-256color` gives 2.
 - A `TERM` that starts with `screen`, `xterm`, `vt100`, `vt220` or `rxvt`, or holds `color`, `ansi`, `cygwin` or `linux`, gives 1.
 - Any other `COLORTERM` gives 1. Else the level is the minimum.
 
 The `_at` writers take the level and lower the colour. The plain writers do
-not lower. Level 0 writes the plain text. An empty string for `force` or
-`colorterm` means not set. chalk reads an empty `FORCE_COLOR` as set.
+not lower. Level 0 writes the plain text. `color_level_tty` takes text, so an empty string means not set there. Use
+`color_env_set` with an empty value to say that a variable is set and empty.
 
 `color_level_stream(true)` is chalk `supportsColor` for a terminal.
 `color_level_stream(false)` is `supportsColorStderr` for a pipe. The two
@@ -113,7 +124,7 @@ the Goose standard library has none. The caller passes the flag.
 ## Limits
 
 - `color_level()` does not test for a tty. It assumes one. Use `color_level_stream` with the flag.
-- The level reads `TERM`, `COLORTERM`, `FORCE_COLOR` and `NO_COLOR` only. It does not read the CI variables, `TF_BUILD`, `TEAMCITY_VERSION`, `TERM_PROGRAM`, the Windows release or the `--color` flags.
+- `color_level_tty` reads `TERM`, `COLORTERM`, `FORCE_COLOR` and `NO_COLOR` only, as in v0.3.0. `color_level_stream` and `color_level_env` read all the rules except the Windows release rule.
 - `NO_COLOR` gives level 0. chalk ignores it. `COLORTERM=24bit` gives level 3. chalk gives 1 for it.
 - `wrap` splits at spaces only. It does not break at hyphens.
 - `wrap` trims no space at the start of a line, except at a break.
@@ -133,6 +144,19 @@ Every writer closes with ESC[0m. chalk closes with the reset of the one attribut
 
 The underline colour exists in chalk 6 (`underlineRgb`, `underlineHex`,
 `underlineAnsi256`). It is not in chalk 5. Not every terminal draws it.
+
+## Changes in 0.4.0
+
+`color_level_stream` and `color_level` read more than before. These results change:
+
+- In CI, with `CI` set, `GITHUB_ACTIONS`, `GITEA_ACTIONS` and `CIRCLECI` now give 3. The other providers give 1.
+- `TF_BUILD` with `AGENT_NAME` gives 1.
+- `TEAMCITY_VERSION` gives 1 or 0.
+- `TERM_PROGRAM` of iTerm or Apple Terminal gives 3 or 2.
+- The flags `--color` and `--no-color` of the program change the level.
+- An empty `FORCE_COLOR` sets a minimum of 1.
+
+`color_level_tty` and `color_level_with` give the same results as in 0.3.0.
 
 ## Changes from 0.2.0
 
@@ -159,11 +183,15 @@ styled text ends with the reset sequence. A cut inside a link closes the link.
 goose run test/run.goose
 goose run test/run.goose --debug
 goose run examples/demo.goose
+goose run examples/detect.goose
 ```
 
 The file `test/chalk_cases.goose` holds 1207 cases from chalk 6.0.1. The script
 `test/make_chalk_cases.mjs` makes them with a fixed seed. 14 of them are refusal cases
 with no chalk result. The script needs chalk 6.0.1 and Node.
+
+The file `test/support_cases.goose` holds 2566 cases for the level rules. The script
+`test/make_support_cases.mjs` makes them with the seed 20261107. It needs chalk 6.0.1 and Node.
 
 ## License
 

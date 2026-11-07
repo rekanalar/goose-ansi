@@ -62,7 +62,12 @@ jobs:
           GOOSE_HOME: ${{ runner.temp }}/goose-home
 
       - name: Run the examples
-        run: goose run examples/demo.goose
+        run: |
+          for f in examples/*.goose; do
+            echo "::group::$f"
+            goose run "$f"
+            echo "::endgroup::"
+          done
         env:
           GOOSE_HOME: ${{ runner.temp }}/goose-home
 
