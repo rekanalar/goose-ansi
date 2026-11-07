@@ -11,6 +11,10 @@ namespace ansi;
 import std;
 import measure;
 import capability;
+import escape;
+import color;
+import link;
+import wrap;
 
 // style writes the text with the SGR parameters in codes. One select
 // carries the parameters, so style(out, "x", [1, 31]) is bold red.

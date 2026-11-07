@@ -12,32 +12,22 @@ namespace ansi;
 import std;
 import width;
 
-// strip writes s without its SGR sequences into out. Another kind of
-// escape sequence stays. A sequence is ESC, '[', any bytes up to 'm'.
+// strip writes s without its CSI and OSC sequences into out. An open
+// sequence with no end stays.
 fn strip(out: u8[>..]&, s: u8[:]) {
     var i = 0;
     while i < s.len {
-        if s[i] == 0x1b && i + 1 < s.len && s[i + 1] == '[' {
-            var j = i + 2;
-            while j < s.len && !is_final_byte(s[j]) { j += 1; }
-            if j < s.len {
-                i = j + 1;
-                continue;
-            }
+        let e = escape_end(s, i);
+        if e >= 0 {
+            i = e;
+            continue;
         }
         out.push(s[i]);
         i += 1;
     }
 }
 
-// is_final_byte returns true when the byte ends an escape sequence. The
-// final byte of an SGR sequence is 'm', and the parameter bytes before it
-// are digits and separators.
-fn is_final_byte(b: u8) -> bool {
-    return b == 'm';
-}
-
-// len returns the visible length of s in columns. It skips the SGR
+// len returns the visible length of s in columns. It skips the escape
 // sequences.
 fn len(s: u8[:]) -> i64 {
     var text: u8[>..] = [];
@@ -102,28 +92,30 @@ fn decode_utf8(s: u8[:], i: i64) -> i64 {
 }
 
 // truncate writes at most width columns of s into out. The sequences it
-// passes stay in place. A cut of styled text ends with the reset sequence.
+// passes stay in place. A cut of styled text ends with the reset sequence,
+// and a cut inside a hyperlink closes the link.
 //
-// A sequence is held until a visible character follows it. A sequence with
-// no character after it is dropped. This keeps a cut of plain text plain.
+// A sequence is held until a visible character follows it. A cut drops the
+// sequences after the last kept character. Text that fits keeps them all.
 fn truncate(out: u8[>..]&, s: u8[:], width: i64) {
     var columns = 0;
     var i = 0;
     var cut = false;
     var styled = false;
-    // The bytes of the sequence that waits for a visible character.
+    var link_open = false;
+    var pending_sgr = false;
+    // The bytes of the sequences that wait for a visible character.
     var pending_start = -1;
     var pending_end = -1;
     while i < s.len {
-        if s[i] == 0x1b && i + 1 < s.len && s[i + 1] == '[' {
-            var j = i + 2;
-            while j < s.len && !is_final_byte(s[j]) { j += 1; }
-            if j < s.len {
-                pending_start = i;
-                pending_end = j + 1;
-                i = j + 1;
-                continue;
-            }
+        let e = escape_end(s, i);
+        if e >= 0 {
+            if pending_start < 0 { pending_start = i; }
+            pending_end = e;
+            if is_sgr(s, i, e) { pending_sgr = true; }
+            if !cut && is_osc8(s, i, e) { link_open = osc8_opens(s, i, e); }
+            i = e;
+            continue;
         }
         if cut {
             i += 1;
@@ -144,15 +136,34 @@ fn truncate(out: u8[>..]&, s: u8[:], width: i64) {
             i += size;
             continue;
         }
-        // The character is kept, so the sequence before it is kept too.
+        // The character is kept, so the sequences before it are kept too.
         if pending_start >= 0 {
             out.append(s[pending_start..pending_end]);
             pending_start = -1;
-            styled = true;
+            if pending_sgr { styled = true; }
+            pending_sgr = false;
         }
         columns += w;
         out.append(s[i..i + size]);
         i += size;
     }
+    if !cut && pending_start >= 0 { out.append(s[pending_start..pending_end]); }
+    if cut && link_open { out.append("\x1b]8;;\x07"); }
     if cut && styled { out.append("\x1b[0m"); }
+}
+
+// truncate_with writes s when it fits in width columns. Else it writes the
+// cut of s and then tail, and the whole result takes width columns. A tail
+// wider than width is cut itself.
+fn truncate_with(out: u8[>..]&, s: u8[:], width: i64, tail: u8[:]) {
+    if len(s) <= width { out.append(s); return; }
+    let tw = len(tail);
+    if tw >= width { truncate(out, tail, width); return; }
+    truncate(out, s, width - tw);
+    out.append(tail);
+}
+
+// truncate_ellipsis is truncate_with and the one character U+2026.
+fn truncate_ellipsis(out: u8[>..]&, s: u8[:], width: i64) {
+    truncate_with(out, s, width, "\xe2\x80\xa6");
 }

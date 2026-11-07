@@ -91,10 +91,20 @@ fn test_strip() {
     ansi::strip(open, "\x1b[31");
     expect(open, "\x1b[31", "strip open escape");
 
-    // Another kind of escape stays.
+    // Every CSI sequence goes: cursor move, erase, private mode.
     var out4: u8[>..] = [];
-    ansi::strip(out4, "\x1b[2Jx");
-    expect(out4, "\x1b[2Jx", "strip keeps non-sgr");
+    ansi::strip(out4, "\x1b[2Jx\x1b[10;5Hy\x1b[?25lz\x1b[3A");
+    expect(out4, "xyz", "strip csi");
+
+    // OSC sequences go, with a BEL end or an ST end.
+    var out5: u8[>..] = [];
+    ansi::strip(out5, "\x1b]8;;http://a.b\x07link\x1b]8;;\x07 \x1b]0;title\x1b\\ok");
+    expect(out5, "link ok", "strip osc");
+
+    // An OSC without an end stays.
+    var out6: u8[>..] = [];
+    ansi::strip(out6, "a\x1b]8;;x");
+    expect(out6, "a\x1b]8;;x", "strip open osc");
 }
 
 fn test_len() {
@@ -165,6 +175,162 @@ fn test_capability() {
     assert(ansi::enabled_with(false, "") == true);
 }
 
+fn test_bright() {
+    var out: u8[>..] = [];
+    ansi::bright_red(out, "x");
+    expect(out, "\x1b[91mx\x1b[0m", "bright_red");
+    var out2: u8[>..] = [];
+    ansi::bg_bright_white(out2, "x");
+    expect(out2, "\x1b[107mx\x1b[0m", "bg_bright_white");
+    var out3: u8[>..] = [];
+    ansi::bright_black(out3, "x");
+    expect(out3, "\x1b[90mx\x1b[0m", "bright_black");
+}
+
+fn test_levels() {
+    // Level 3 keeps truecolor.
+    var a: u8[>..] = [];
+    ansi::truecolor_at(a, "x", 255, 128, 0, 3);
+    expect(a, "\x1b[38;2;255;128;0mx\x1b[0m", "level 3");
+    // Level 2 lowers to the palette. chalk gives 214 for 255,128,0.
+    var b: u8[>..] = [];
+    ansi::truecolor_at(b, "x", 255, 128, 0, 2);
+    expect(b, "\x1b[38;5;214mx\x1b[0m", "level 2");
+    // Level 1 lowers to 16 colours. Bright yellow for 255,128,0.
+    var c: u8[>..] = [];
+    ansi::truecolor_at(c, "x", 255, 128, 0, 1);
+    expect(c, "\x1b[93mx\x1b[0m", "level 1");
+    // Level 0 writes the plain text.
+    var d: u8[>..] = [];
+    ansi::truecolor_at(d, "x", 255, 128, 0, 0);
+    expect(d, "x", "level 0");
+    // Background forms.
+    var e: u8[>..] = [];
+    ansi::bg_truecolor_at(e, "x", 255, 0, 0, 1);
+    expect(e, "\x1b[101mx\x1b[0m", "bg level 1");
+    var f: u8[>..] = [];
+    ansi::bg_truecolor_at(f, "x", 0, 0, 255, 2);
+    expect(f, "\x1b[48;5;21mx\x1b[0m", "bg level 2");
+    // A palette number at lower levels.
+    var g: u8[>..] = [];
+    ansi::color256_at(g, "x", 196, 1);
+    expect(g, "\x1b[91mx\x1b[0m", "color256 level 1");
+    var h: u8[>..] = [];
+    ansi::color256_at(h, "x", 196, 2);
+    expect(h, "\x1b[38;5;196mx\x1b[0m", "color256 level 2");
+    var i: u8[>..] = [];
+    ansi::bg_color256_at(i, "x", 4, 1);
+    expect(i, "\x1b[44mx\x1b[0m", "bg_color256 level 1");
+    var j: u8[>..] = [];
+    ansi::color256_at(j, "x", 196, 0);
+    expect(j, "x", "color256 level 0");
+    // Grays.
+    assert(ansi::rgb_to_256(0, 0, 0) == 16);
+    assert(ansi::rgb_to_256(255, 255, 255) == 231);
+    assert(ansi::rgb_to_256(128, 128, 128) == 244);
+    assert(ansi::rgb_to_256(255, 0, 0) == 196);
+    assert(ansi::rgb_to_16(0, 0, 0) == 30);
+    assert(ansi::rgb_to_16(255, 255, 255) == 97);
+    assert(ansi::rgb_to_16(0, 0, 255) == 94);
+}
+
+fn test_color_level() {
+    assert(ansi::color_level_with(false, "xterm-256color", "truecolor", "") == 3);
+    assert(ansi::color_level_with(false, "xterm-256color", "", "") == 2);
+    assert(ansi::color_level_with(false, "xterm", "", "") == 1);
+    assert(ansi::color_level_with(true, "xterm-256color", "truecolor", "") == 0);
+    assert(ansi::color_level_with(false, "dumb", "", "") == 0);
+    assert(ansi::color_level_with(true, "xterm", "", "2") == 2);
+    assert(ansi::color_level_with(false, "xterm-256color", "", "0") == 0);
+    assert(ansi::color_level_with(false, "xterm-256color", "", "true") == 1);
+}
+
+fn test_link() {
+    var out: u8[>..] = [];
+    ansi::link(out, "site", "https://a.b");
+    expect(out, "\x1b]8;;https://a.b\x07site\x1b]8;;\x07", "link");
+    assert(ansi::len(out) == 4);
+    var out2: u8[>..] = [];
+    ansi::link_with(out2, "site", "https://a.b", false);
+    expect(out2, "site (https://a.b)", "link fallback");
+    assert(ansi::links_supported_with("", "iTerm.app", "", "xterm"));
+    assert(ansi::links_supported_with("", "", "6003", "xterm"));
+    assert(!ansi::links_supported_with("", "", "4000", "xterm"));
+    assert(!ansi::links_supported_with("", "Apple_Terminal", "", "xterm"));
+    assert(ansi::links_supported_with("1", "", "", "dumb"));
+    assert(!ansi::links_supported_with("0", "iTerm.app", "", "xterm"));
+}
+
+fn test_ellipsis() {
+    var out: u8[>..] = [];
+    ansi::truncate_ellipsis(out, "hello world", 6);
+    expect(out, "hello\xe2\x80\xa6", "ellipsis plain");
+    var out2: u8[>..] = [];
+    ansi::truncate_ellipsis(out2, "short", 10);
+    expect(out2, "short", "ellipsis fits");
+    var out3: u8[>..] = [];
+    ansi::truncate_ellipsis(out3, "\x1b[31mhello world\x1b[0m", 6);
+    expect(out3, "\x1b[31mhello\x1b[0m\xe2\x80\xa6", "ellipsis styled");
+    var out4: u8[>..] = [];
+    ansi::truncate_with(out4, "hello world", 8, "...");
+    expect(out4, "hello...", "truncate_with");
+    assert(ansi::len(out4) == 8);
+    // Text that fits keeps its trailing sequence.
+    var out5: u8[>..] = [];
+    ansi::truncate_ellipsis(out5, "\x1b[31mab\x1b[0m", 5);
+    expect(out5, "\x1b[31mab\x1b[0m", "ellipsis fits styled");
+    // A cut inside a link closes the link.
+    var out6: u8[>..] = [];
+    ansi::truncate(out6, "\x1b]8;;http://a\x07abcdef\x1b]8;;\x07", 3);
+    expect(out6, "\x1b]8;;http://a\x07abc\x1b]8;;\x07", "truncate link");
+}
+
+fn test_wrap() {
+    var out: u8[>..] = [];
+    ansi::wrap(out, "the quick brown fox", 10, false);
+    expect(out, "the quick\nbrown fox", "wrap plain");
+
+    // A long word stays whole without hard.
+    var out2: u8[>..] = [];
+    ansi::wrap(out2, "abcdefghij kl", 4, false);
+    expect(out2, "abcdefghij\nkl", "wrap long word");
+
+    // A long word breaks with hard.
+    var out3: u8[>..] = [];
+    ansi::wrap(out3, "abcdefghij kl", 4, true);
+    expect(out3, "abcd\nefgh\nij\nkl", "wrap hard");
+
+    // The style stays across the break.
+    var out4: u8[>..] = [];
+    ansi::wrap(out4, "\x1b[31mred green blue\x1b[0m", 9, false);
+    expect(out4, "\x1b[31mred green\x1b[0m\n\x1b[31mblue\x1b[0m", "wrap sgr");
+
+    // A reset ends the carry.
+    var out5: u8[>..] = [];
+    ansi::wrap(out5, "\x1b[1mab\x1b[0m cd ef", 5, false);
+    expect(out5, "\x1b[1mab\x1b[0m cd\nef", "wrap after reset");
+
+    // The link stays across the break.
+    var out6: u8[>..] = [];
+    ansi::wrap(out6, "\x1b]8;;u\x07aa bb\x1b]8;;\x07", 2, false);
+    expect(out6, "\x1b]8;;u\x07aa\x1b]8;;\x07\n\x1b]8;;u\x07bb\x1b]8;;\x07", "wrap link");
+
+    // A newline in the text resets the column.
+    var out7: u8[>..] = [];
+    ansi::wrap(out7, "ab\ncd ef", 5, false);
+    expect(out7, "ab\ncd ef", "wrap newline");
+
+    // Wide characters count two columns.
+    var out8: u8[>..] = [];
+    ansi::wrap(out8, "\xe6\xbc\xa2 \xe6\xbc\xa2", 3, false);
+    expect(out8, "\xe6\xbc\xa2\n\xe6\xbc\xa2", "wrap wide");
+
+    // A new colour replaces the old one in the carry.
+    var out9: u8[>..] = [];
+    ansi::wrap(out9, "\x1b[31ma \x1b[32mb c", 3, false);
+    expect(out9, "\x1b[31ma \x1b[32mb\x1b[0m\n\x1b[32mc", "wrap colour replace");
+}
+
 fn main() {
     test_attributes();
     test_colors();
@@ -174,6 +340,12 @@ fn main() {
     test_width();
     test_truncate();
     test_capability();
+    test_bright();
+    test_levels();
+    test_color_level();
+    test_link();
+    test_ellipsis();
+    test_wrap();
     print("all tests passed");
     return 0;
 }
