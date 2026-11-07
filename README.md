@@ -27,6 +27,9 @@ Put this line in the root file of your program:
 import ansi from "rekanalar/goose-ansi@v0.4.0";
 ```
 
+The CI runs the gate on Linux, macOS and Windows. It uses Goose v2026.4
+and v2026.3 on each.
+
 ## Example
 
 ```goose
