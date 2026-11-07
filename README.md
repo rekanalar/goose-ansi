@@ -145,29 +145,6 @@ Every writer closes with ESC[0m. chalk closes with the reset of the one attribut
 The underline colour exists in chalk 6 (`underlineRgb`, `underlineHex`,
 `underlineAnsi256`). It is not in chalk 5. Not every terminal draws it.
 
-## Changes in 0.4.0
-
-`color_level_stream` and `color_level` read more than before. These results change:
-
-- In CI, with `CI` set, `GITHUB_ACTIONS`, `GITEA_ACTIONS` and `CIRCLECI` now give 3. The other providers give 1.
-- `TF_BUILD` with `AGENT_NAME` gives 1.
-- `TEAMCITY_VERSION` gives 1 or 0.
-- `TERM_PROGRAM` of iTerm or Apple Terminal gives 3 or 2.
-- The flags `--color` and `--no-color` of the program change the level.
-- An empty `FORCE_COLOR` sets a minimum of 1.
-
-`color_level_tty` and `color_level_with` give the same results as in 0.3.0.
-
-## Changes from 0.2.0
-
-- `FORCE_COLOR` of 4 or more gives 3. Version 0.2.0 gave 1.
-- `FORCE_COLOR=true` detects the level. With `TERM=xterm-256color` the level is 2. Version 0.2.0 gave 1.
-- A `FORCE_COLOR` that is not a number, `true` or `false` has no effect. Version 0.2.0 gave 1.
-- A `TERM` of an unknown name with no `COLORTERM` gives 0. Version 0.2.0 gave 1.
-- A `TERM` with `256color` inside, but not at the end, no longer gives 2.
-- `wrap` keeps a truecolor or underline colour over a line break. Version 0.2.0 lost the colour when a part was zero.
-- A colour lowered to 16 colours gets the bright code only when one component is full. Version 0.2.0 gave the bright code to most light colours. A light gray now gives 37, not 97.
-
 ## Widths
 
 `len` and `truncate` count columns. A wide character takes two columns. The
