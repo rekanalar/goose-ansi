@@ -94,7 +94,7 @@ fn styled(out: u8[>..]&, text: u8[:], spec: u8[:]) -> bool {
     var url: u8[>..] = [];
     if style::style_link(url, spec) == 1 {
         out.append("\x1b]8;;");
-        out.append(url);
+        osc8_url(out, url);
         out.push(0x07);
     }
     if codes.len > 0 { style(out, text, codes[..]); } else { out.append(text); }

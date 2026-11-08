@@ -8,10 +8,27 @@ namespace ansi;
 import std;
 import os;
 
+// osc8_url writes the URL bytes that the OSC 8 form allows. The OSC 8
+// spec allows only bytes 32 to 126 in the URI. Every other byte becomes
+// %XX with uppercase hex, so a BEL or ESC in the URL cannot end the
+// sequence early.
+fn osc8_url(out: u8[>..]&, url: u8[:]) {
+    let digits = "0123456789ABCDEF";
+    for b in url {
+        if b >= 32 && b <= 126 {
+            out.push(b);
+        } else {
+            out.push('%');
+            out.push(digits[b >> 4]);
+            out.push(digits[b & 15]);
+        }
+    }
+}
+
 // link writes the text as a hyperlink to url.
 fn link(out: u8[>..]&, text: u8[:], url: u8[:]) {
     out.append("\x1b]8;;");
-    out.append(url);
+    osc8_url(out, url);
     out.push(0x07);
     out.append(text);
     out.append("\x1b]8;;\x07");
@@ -23,7 +40,7 @@ fn link_with(out: u8[>..]&, text: u8[:], url: u8[:], supported: bool) {
     if supported { link(out, text, url); return; }
     out.append(text);
     out.append(" (");
-    out.append(url);
+    osc8_url(out, url);
     out.push(')');
 }
 

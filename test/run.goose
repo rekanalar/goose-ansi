@@ -295,6 +295,122 @@ fn test_link() {
     assert(!ansi::links_supported_with("0", "iTerm.app", "", "xterm"));
 }
 
+fn test_link_safe() {
+    // A printable URL, with a space and a percent escape, keeps its bytes.
+    var out: u8[>..] = [];
+    ansi::link(out, "site", "https://a.b/x%41?q=1;r s");
+    expect(out, "\x1b]8;;https://a.b/x%41?q=1;r s\x07site\x1b]8;;\x07", "link safe url");
+    // A percent escape that names an unsafe byte is text, not a byte.
+    var out2: u8[>..] = [];
+    ansi::link(out2, "site", "https://a.b/%7f");
+    expect(out2, "\x1b]8;;https://a.b/%7f\x07site\x1b]8;;\x07", "link percent text");
+    // An empty URL stays empty.
+    var out3: u8[>..] = [];
+    ansi::link(out3, "site", "");
+    expect(out3, "\x1b]8;;\x07site\x1b]8;;\x07", "link empty url");
+}
+
+// expect_link checks the link of a text "x" to url. want is the URL part
+// that the writer must put between the two separators.
+fn expect_link(url: u8[:], want: u8[:], what: u8[:]) {
+    var out: u8[>..] = [];
+    ansi::link(out, "x", url);
+    var w: u8[>..] = [];
+    w.append("\x1b]8;;");
+    w.append(want);
+    w.append("\x07x\x1b]8;;\x07");
+    expect(out, w, what);
+}
+
+fn test_link_unsafe() {
+    // Control bytes become %XX, so no writer emits them raw.
+    expect_link("http://a/\x07", "http://a/%07", "link bel");
+    expect_link("http://a/\x1b", "http://a/%1B", "link esc");
+    expect_link("http://a/\x00\x7f", "http://a/%00%7F", "link nul del");
+    // A raw 0x9c, the C1 ST byte, encodes too.
+    expect_link("http://a/\x9c", "http://a/%9C", "link c1 st");
+    // The two bytes of U+009C in UTF-8 each encode.
+    expect_link("http://a/\xc2\x9c", "http://a/%C2%9C", "link utf8 st");
+    expect_link("http://a/é", "http://a/%C3%A9", "link eacute");
+    // A backslash is printable and stays. ESC \ encodes to %1B\.
+    expect_link("http://a/\\", "http://a/\\", "link backslash");
+    expect_link("http://a/\x1b\\", "http://a/%1B\\", "link st form");
+}
+
+fn test_link_probe() {
+    // The probe URL: the output holds exactly 2 BEL and 2 ESC,
+    // the two sequence starts. Nothing else runs as an escape.
+    var out: u8[>..] = [];
+    ansi::link(out, "click", "http://a/\x07\x1b]0;pwned\x07\x1b[2J");
+    var bels = 0;
+    var escs = 0;
+    for b in out {
+        if b == 0x07 { bels += 1; }
+        if b == 0x1b { escs += 1; }
+    }
+    assert(bels == 2);
+    assert(escs == 2);
+    expect(out, "\x1b]8;;http://a/%07%1B]0;pwned%07%1B[2J\x07click\x1b]8;;\x07", "link probe");
+}
+
+fn test_link_scan() {
+    // The scanners read a link with a hostile URL as before.
+    var l: u8[>..] = [];
+    ansi::link(l, "click", "http://a/\x07é");
+    var s: u8[>..] = [];
+    ansi::strip(s, l);
+    expect(s, "click", "scan strip");
+    assert(ansi::len(l) == 5);
+    var t: u8[>..] = [];
+    ansi::truncate(t, l, 3);
+    expect(t, "\x1b]8;;http://a/%07%C3%A9\x07cli\x1b]8;;\x07", "scan truncate");
+    // wrap re-emits the link on each line, as before.
+    var m: u8[>..] = [];
+    ansi::link(m, "ab cd", "http://a/\x07");
+    var w: u8[>..] = [];
+    ansi::wrap(w, m, 2, false);
+    expect(w, "\x1b]8;;http://a/%07\x07ab\x1b]8;;\x07\n\x1b]8;;http://a/%07\x07cd\x1b]8;;\x07", "scan wrap");
+}
+
+fn test_wrap_link_verbatim() {
+    // wrap copies the OSC 8 sequence of the input text verbatim. A
+    // hostile byte in the input sequence comes out on every line. strip
+    // removes it; this test pins the copy.
+    var s: u8[>..] = [];
+    s.append("\x1b]8;;http://a/é\x07");
+    s.append("word1 word2");
+    s.append("\x1b]8;;\x07");
+    var w: u8[>..] = [];
+    ansi::wrap(w, s, 6, false);
+    expect(w, "\x1b]8;;http://a/é\x07word1\x1b]8;;\x07\n\x1b]8;;http://a/é\x07word2\x1b]8;;\x07", "wrap verbatim");
+    var st: u8[>..] = [];
+    ansi::strip(st, w);
+    expect(st, "word1\nword2", "wrap verbatim strip");
+}
+
+fn test_link_limit() {
+    // The scan limit of osc_end is 2048 bytes of body. A URL of 2044
+    // bytes fits; one of 2045 bytes does not.
+    var in1: u8[>..] = [];
+    in1.append("\x1b]8;;");
+    for i in 0..2044 { in1.push('a'); }
+    in1.append("\x07text\x1b]8;;\x07");
+    var s1: u8[>..] = [];
+    ansi::strip(s1, in1);
+    expect(s1, "text", "limit inside");
+    assert(ansi::len(in1) == 4);
+    var in2: u8[>..] = [];
+    in2.append("\x1b]8;;");
+    for i in 0..2045 { in2.push('a'); }
+    in2.append("\x07text\x1b]8;;\x07");
+    var s2: u8[>..] = [];
+    ansi::strip(s2, in2);
+    // A body of 2045 bytes passes the limit. The opener stays as text.
+    // The short closer is still a sequence, so strip removes it.
+    assert(s2.len == 5 + 2045 + 1 + 4);
+    assert(ansi::len(in2) == 2053);
+}
+
 fn test_ellipsis() {
     var out: u8[>..] = [];
     ansi::truncate_ellipsis(out, "hello world", 6);
@@ -642,6 +758,26 @@ fn test_styled() {
     assert(c.len == 0);
 }
 
+fn test_styled_link_unsafe() {
+    // The styled link word encodes a BEL in the URL.
+    var out: u8[>..] = [];
+    assert(ansi::styled(out, "x", "bold link http://a/\x07"));
+    expect(out, "\x1b]8;;http://a/%07\x07\x1b[1mx\x1b[0m\x1b]8;;\x07", "styled link unsafe");
+}
+
+fn test_link_with_unsafe() {
+    // The supported branch equals the output of link.
+    var sup: u8[>..] = [];
+    ansi::link_with(sup, "x", "http://a/\x07", true);
+    var lit: u8[>..] = [];
+    ansi::link(lit, "x", "http://a/\x07");
+    assert(sup == lit);
+    // The fallback encodes the URL in the parentheses.
+    var out: u8[>..] = [];
+    ansi::link_with(out, "x", "http://a/\x07é", false);
+    expect(out, "x (http://a/%07%C3%A9)", "link_with fallback unsafe");
+}
+
 fn test_override() {
     assert(!ansi::override_active());
     ansi::set_override(0);
@@ -695,13 +831,21 @@ fn main() {
     test_width_corpus();
     test_strip_c1();
     test_wrap_full();
+    test_link_scan();
+    test_wrap_link_verbatim();
+    test_link_limit();
     test_open_osc_limit();
     test_new_attributes();
     test_style_parse();
     test_styled();
+    test_styled_link_unsafe();
+    test_link_with_unsafe();
     test_override();
     test_terminal();
     test_link();
+    test_link_safe();
+    test_link_unsafe();
+    test_link_probe();
     test_ellipsis();
     test_wrap();
     test_chalk_gaps();

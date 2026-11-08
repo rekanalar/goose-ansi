@@ -90,8 +90,8 @@ fn main() {
 | `style::style_parse(codes, spec)` | writes the SGR codes of a style string; gives 0, or -1 for a bad word |
 | `styled(out, text, spec)` | the text in a style string, with `rgb(r,g,b)`, `color(n)` and `link URL`; false for a bad string |
 | `style::style_link(url, spec)` | writes the url of a `link URL` word; gives 1, or 0 |
-| `link(out, text, url)` | an OSC 8 hyperlink |
-| `link_with(out, text, url, supported)` | a link, or "text (url)" |
+| `link(out, text, url)` | an OSC 8 hyperlink; the URL bytes that OSC 8 forbids are written as `%XX` |
+| `link_with(out, text, url, supported)` | a link, or "text (url)"; both forms write the URL with `%XX` |
 | `links_supported()` | true when the terminal takes OSC 8 |
 | `char_width(cp)` | the columns of one code point |
 | `enabled()` | true when the terminal takes styling |
@@ -157,9 +157,29 @@ Other limits:
 - `wrap` splits at spaces only. It does not break at hyphens.
 - `wrap` keeps the style as a list of SGR codes. An unusual code stays as is.
 - `links_supported()` knows a few terminals and `VTE_VERSION` 5000 or more.
+- Link URL bytes. Before this change the writers wrote the URL raw. Now they write each byte below 0x20, the byte 0x7F and each byte from 0x80 as `%XX` in uppercase hex. A printable URL, with any `%XX` it holds, keeps its bytes. The fall back `text (url)` shows `%C3%A9` where it showed `é`.
+- After the encoding, a link URL of 2045 bytes or more is no link to `strip`, `len`, `truncate` and `wrap`. They read the opening sequence as text. A URL of 2044 bytes or fewer works.
 - The writers do not parse nested styles. Use `style` with several codes.
 - The C1 controls count in their UTF-8 form (C2 9B, C2 9C, C2 9D). A lone byte 0x9B is not a control.
 - `terminal_size` reads stdout, then stderr, then stdin. It does not follow a resize.
+
+## Security
+
+A terminal reads `ESC`, `BEL` and the C1 bytes inside an OSC 8 link as controls. A URL that holds them ends the sequence early. The rest runs as escapes. It can set the window title, clear the screen or write the clipboard with OSC 52.
+
+`ansi-escapes` 7.3.0, `terminal-link` 5.0.0 and `rich` 15.0.0 write the URL into the sequence raw. We read their source. This package does not copy that.
+
+Protections beyond those references:
+
+- `link`, the `link` word of `styled` and the fall back of `link_with` write the URL through `osc8_url`. It keeps the bytes 32 to 126. It writes every other byte as `%XX`. No raw `ESC`, `BEL` or C1 byte reaches the sequence.
+- `style_link` still returns the raw word. `styled` encodes it when it writes.
+
+Risks that stay:
+
+- The `text` argument is yours. `link`, `styled` and `wrap` write it as is. Text from an untrusted source can carry escapes. Run `strip` on it first.
+- `wrap` copies an OSC 8 sequence from its input and writes it again on each line. It does not encode that sequence. Run `strip` on untrusted input.
+- A terminal ends an OSC sequence at a bare `ESC`. `strip`, `len` and `truncate` do not. They can read a hostile input sequence as one sequence where the terminal reads two. `strip` untrusted input before you pass it on.
+- An encoded URL of 2045 bytes or more is not a link to the scanners. See the limits.
 
 ## Hex strings and underline colours
 
