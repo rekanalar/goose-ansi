@@ -27,7 +27,7 @@ Terminal styling for the [Goose](https://github.com/aardappel/goose) programming
 Put this line in the root file of your program:
 
 ```goose
-import ansi from "rekanalar/goose-ansi@v1.0.0";
+import ansi from "rekanalar/goose-ansi@v1.0.1";
 ```
 
 The CI runs the gate on Linux, macOS and Windows. It uses Goose v2026.4
@@ -37,7 +37,7 @@ and v2026.3 on each.
 
 ```goose
 import std;
-import ansi from "rekanalar/goose-ansi@v1.0.0";
+import ansi from "rekanalar/goose-ansi@v1.0.1";
 
 fn main() {
     var line: u8[>..] = [];
