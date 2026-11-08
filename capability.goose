@@ -89,11 +89,31 @@ fn color_level_with(no_color: bool, term: u8[:], colorterm: u8[:], force: u8[:])
     return color_level_tty(true, no_color, term, colorterm, force);
 }
 
+// The override state. set_override forces a level for every later query.
+var OVERRIDE: i64 = -1;
+
+// set_override forces the colour level, from 0 to 3. A value outside the
+// range clamps.
+fn set_override(level: i64) {
+    var l = level;
+    if l < 0 { l = 0; }
+    if l > 3 { l = 3; }
+    OVERRIDE = l;
+}
+
+// unset_override clears the override.
+fn unset_override() { OVERRIDE = -1; }
+
+// override_active tells whether an override is set.
+fn override_active() -> bool { return OVERRIDE >= 0; }
+
 // color_level_stream reads the whole environment and the program
-// arguments, and gives the level for a stream. chalk gives supportsColor
-// for the stdout stream and supportsColorStderr for the stderr stream. The
-// two differ only by the terminal flag.
+// arguments, and gives the level for a stream. The override wins over
+// everything. chalk gives supportsColor for the stdout stream and
+// supportsColorStderr for the stderr stream. The two differ only by the
+// terminal flag.
 fn color_level_stream(is_tty: bool) -> i64 {
+    if OVERRIDE >= 0 { return OVERRIDE; }
     let e = read_color_env();
     let argv = args();
     var list: const u8[:][>..] = [];
@@ -102,10 +122,17 @@ fn color_level_stream(is_tty: bool) -> i64 {
     return color_level_env(is_tty, e, f);
 }
 
-// color_level returns the colour level for a terminal: 0 none, 1 sixteen
+// color_level_stdout gives the level for stdout. It asks the real state of
+// the stream.
+fn color_level_stdout() -> i64 { return color_level_stream(is_tty_stdout()); }
+
+// color_level_stderr gives the level for stderr.
+fn color_level_stderr() -> i64 { return color_level_stream(is_tty_stderr()); }
+
+// color_level returns the colour level of stdout: 0 none, 1 sixteen
 // colours, 2 the 256 palette, 3 truecolor.
 fn color_level() -> i64 {
-    return color_level_stream(true);
+    return color_level_stdout();
 }
 
 // ColorEnv holds what the level rules read from the environment, as

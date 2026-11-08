@@ -468,11 +468,214 @@ fn test_chalk_gaps() {
     assert(clock_ns() - t0 < 1000000000);
     // The stream level reads the environment. With a terminal it equals
     // color_level. Without one it is 0 unless FORCE_COLOR is set.
-    assert(ansi::color_level_stream(true) == ansi::color_level());
+    // color_level asks the real stream. Under the runner stdout is a pipe.
+    assert(ansi::color_level_stream(ansi::is_tty_stdout()) == ansi::color_level());
     var force: u8[>..] = [];
     if !env("FORCE_COLOR", force) {
         assert(ansi::color_level_stream(false) == 0);
     }
+}
+
+// The width corpus: values of string-width 7.2.0 for 42 inputs.
+fn test_width_corpus() {
+    let cases: const u8[:][42] = [
+        "abc", "\xc3\xa9", "e\xcc\x81", "\xc3\xa9",
+        "\xe2\x80\x8b", "\xe2\x80\x8d", "\xef\xbb\xbf", "\xcc\x81", "\xd6\xb0", "\xe0\xa4\xbc",
+        "\xf0\x9f\x8f\xbb", "\xe2\x83\xa3", "\xc2\xa9", "0",
+        "\xe2\x9c\x94", "\xe2\x9c\x94\xef\xb8\x8f", "\xe2\x9d\xa4", "\xe2\x9d\xa4\xef\xb8\x8f",
+        "\xf0\x9f\x98\x80", "\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7",
+        "\xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd", "1\xef\xb8\x8f\xe2\x83\xa3", "\xf0\x9f\x87\xba\xf0\x9f\x87\xb8",
+        "\xe4\xb8\xad", "\xc2\xb1", "\xe2\x94\x80", "\xe2\x96\xa0", "\xe3\x80\x80",
+        "\x1b[31m", "\x1b[31mred\x1b[0m", "\x1b]8;;http://x\x07link\x1b]8;;\x07",
+        "\x07", "\x00", "\xc2\x9b", "\xcc\x81\xcc\x82",
+        "\xf0\x9f\x8f\xb4\xf3\xa0\x81\xa7\xf3\xa0\x81\xa2\xf3\xa0\x81\xb3\xf3\xa0\x81\xa3\xf3\xa0\x81\xb4\xf3\xa0\x81\xbf",
+        "e\xcc\x81", "\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb", "\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9",
+        "\xe2\x80\x8d", "\xe2\x81\xa0", "\xc2\xad",
+    ];
+    let want: i64[42] = [3, 1, 1, 1, 0, 0, 0, 0, 0, 0, 2, 0, 1, 1, 1, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 0, 3, 4, 0, 0, 0, 0, 2, 1, 2, 2, 0, 0, 0];
+    for c, i in cases {
+        let got = ansi::len(c);
+        if got != want[i] { print("FAIL width case ", i, ": got ", got, " want ", want[i]); }
+        assert(got == want[i]);
+    }
+    // count_ansi counts the escape bytes, as rich does.
+    assert(ansi::len_with("\x1b[31mred\x1b[0m", true, true) == 10);
+    assert(ansi::len_with("\x1b[31mred\x1b[0m", true, false) == 3);
+    // Ambiguous characters: narrow by default, wide on request.
+    assert(ansi::len_with("\xc2\xb1", true, false) == 1);
+    assert(ansi::len_with("\xc2\xb1", false, false) == 2);
+}
+
+fn test_strip_c1() {
+    var out: u8[>..] = [];
+    ansi::strip(out, "a\x1b]0;title\x07b");
+    assert(out == "ab");
+    var o2: u8[>..] = [];
+    ansi::strip(o2, "a\x1b]0;title\x1b\\b");
+    assert(o2 == "ab");
+    // The C1 control ST (C2 9C) ends an OSC sequence. CSI and OSC have C1 forms.
+    var o3: u8[>..] = [];
+    ansi::strip(o3, "a\x1b]0;t\xc2\x9cb");
+    assert(o3 == "ab");
+    var o4: u8[>..] = [];
+    ansi::strip(o4, "a\xc2\x9b31mb\xc2\x9d0;t\x07c");
+    assert(o4 == "abc");
+    // A private prefix CSI sequence goes too.
+    var o5: u8[>..] = [];
+    ansi::strip(o5, "a\x1b[?25lb");
+    assert(o5 == "ab");
+    // A continuation byte 0x9b inside a character is not a sequence.
+    var o7: u8[>..] = [];
+    ansi::strip(o7, "a\xe2\x80\x9bb");
+    assert(o7 == "a\xe2\x80\x9bb");
+    // Plain text takes the fast path.
+    var o6: u8[>..] = [];
+    ansi::strip(o6, "plain");
+    assert(o6 == "plain");
+}
+
+fn test_wrap_full() {
+    var a: u8[>..] = [];
+    ansi::wrap_full(a, "aaa bbb ccc", 7, false, true, true);
+    assert(a == "aaa bbb\nccc");
+    // word_wrap false breaks at the width.
+    var b: u8[>..] = [];
+    ansi::wrap_full(b, "abcdefghij", 4, false, true, false);
+    assert(b == "abcd\nefgh\nij");
+    // trim false keeps the space at the start of a continued line.
+    var c: u8[>..] = [];
+    ansi::wrap_full(c, "aaa  bbb", 3, false, false, true);
+    assert(c == "aaa\n  bbb");
+    var d: u8[>..] = [];
+    ansi::wrap_full(d, "aaa  bbb", 3, false, true, true);
+    assert(d == "aaa\nbbb");
+    // The style is re-opened after the break, and a new attribute too.
+    var e: u8[>..] = [];
+    ansi::wrap(e, "\x1b[5maa bb\x1b[25m", 2, false);
+    assert(e == "\x1b[5maa\x1b[0m\n\x1b[5mbb\x1b[25m");
+    // Wide characters count two columns.
+    var f: u8[>..] = [];
+    ansi::wrap(f, "\xe4\xb8\xad\xe4\xb8\xad \xe4\xb8\xad", 4, false);
+    assert(f == "\xe4\xb8\xad\xe4\xb8\xad\n\xe4\xb8\xad");
+}
+
+fn test_open_osc_limit() {
+    // Many open OSC introducers with no end must not take quadratic time.
+    var s: u8[>..] = [];
+    for i in 0..20000 { s.append("\x1b]8;"); }
+    let t0 = clock_ns();
+    var o: u8[>..] = [];
+    ansi::strip(o, s[..]);
+    assert(o.len == s.len);
+    assert(clock_ns() - t0 < 2000000000);
+}
+
+fn test_new_attributes() {
+    var o: u8[>..] = [];
+    ansi::blink(o, "x");
+    assert(o == "\x1b[5mx\x1b[0m");
+    var o2: u8[>..] = [];
+    ansi::blink2(o2, "x");
+    assert(o2 == "\x1b[6mx\x1b[0m");
+    var o3: u8[>..] = [];
+    ansi::underline2(o3, "x");
+    assert(o3 == "\x1b[21mx\x1b[0m");
+    var o4: u8[>..] = [];
+    ansi::frame(o4, "x");
+    assert(o4 == "\x1b[51mx\x1b[0m");
+    var o5: u8[>..] = [];
+    ansi::encircle(o5, "x");
+    assert(o5 == "\x1b[52mx\x1b[0m");
+}
+
+// expect_codes parses spec and compares the codes.
+fn expect_codes(spec: u8[:], want: i64[:]) {
+    var codes: i64[>..] = [];
+    assert(style::style_parse(codes, spec) == 0);
+    if codes.len != want.len { print("FAIL style ", spec, ": ", codes.len, " codes"); }
+    assert(codes.len == want.len);
+    for c, i in codes { assert(c == want[i]); }
+}
+
+fn test_style_parse() {
+    // The expected codes come from rich 15.0.0 Style.parse.
+    expect_codes("bold red on blue", [1, 31, 44]);
+    expect_codes("b i u d r c s uu o", [1, 2, 3, 4, 7, 8, 9, 21, 53]);
+    expect_codes("blink blink2 frame encircle", [5, 6, 51, 52]);
+    expect_codes("#ff8800", [38, 2, 255, 136, 0]);
+    expect_codes("rgb(1,2,3)", [38, 2, 1, 2, 3]);
+    expect_codes("color(5)", [35]);
+    expect_codes("color(200) on color(9)", [38, 5, 200, 101]);
+    expect_codes("default on default", [39, 49]);
+    expect_codes("bright_red on bright_white", [91, 107]);
+    expect_codes("BOLD Red", [1, 31]);
+    expect_codes("none", []);
+    expect_codes("", []);
+    expect_codes("not bold italic", [3]);
+    expect_codes("on #00ff00", [48, 2, 0, 255, 0]);
+    var codes: i64[>..] = [];
+    assert(style::style_parse(codes, "not bold") == -1);
+    assert(style::style_parse(codes, "bold nocolor") == -1);
+    assert(style::style_parse(codes, "on") == -1);
+    assert(style::style_parse(codes, "#ff88") == -1);
+    assert(style::style_parse(codes, "rgb(1,2)") == -1);
+    assert(style::style_parse(codes, "rgb(1,2,300)") == -1);
+    assert(style::style_parse(codes, "color(300)") == -1);
+    assert(style::style_parse(codes, "link") == -1);
+    var url: u8[>..] = [];
+    assert(style::style_link(url, "bold link https://Example.com/A red") == 1);
+    assert(url == "https://Example.com/A");
+    var none: u8[>..] = [];
+    assert(style::style_link(none, "bold red") == 0);
+    expect_codes("bold link https://x red", [1, 31]);
+}
+
+fn test_styled() {
+    var a: u8[>..] = [];
+    assert(ansi::styled(a, "x", "rgb(255,136,0)"));
+    assert(a == "\x1b[38;2;255;136;0mx\x1b[0m");
+    var b: u8[>..] = [];
+    assert(ansi::styled(b, "x", "bold link http://u"));
+    assert(b == "\x1b]8;;http://u\x07\x1b[1mx\x1b[0m\x1b]8;;\x07");
+    var c: u8[>..] = [];
+    assert(!ansi::styled(c, "x", "nonsense"));
+    assert(c.len == 0);
+}
+
+fn test_override() {
+    assert(!ansi::override_active());
+    ansi::set_override(0);
+    assert(ansi::override_active());
+    assert(ansi::color_level_stream(true) == 0);
+    assert(ansi::color_level() == 0);
+    ansi::set_override(3);
+    assert(ansi::color_level_stream(false) == 3);
+    ansi::set_override(9);
+    assert(ansi::color_level() == 3);
+    ansi::unset_override();
+    assert(!ansi::override_active());
+}
+
+fn test_terminal() {
+    // Under the runner the descriptors 1 and 2 are pipes or files.
+    assert(!ansi::is_tty(99));
+    var size: u8[>..] = [];
+    let n = ansi::terminal_size_with(99, size);
+    assert(n == size.len);
+    // The variables COLUMNS and LINES override; else the answer is 80 25.
+    var cols: u8[>..] = [];
+    var lines: u8[>..] = [];
+    let has_c = env("COLUMNS", cols);
+    let has_l = env("LINES", lines);
+    if !has_c && !has_l { assert(size == "80 25"); }
+    // A size always holds two numbers.
+    var sp = 0;
+    while sp < size.len && size[sp] != ' ' { sp += 1; }
+    let c, ok1 = parse_int(size[..sp]);
+    let r, ok2 = parse_int(size[sp + 1..]);
+    assert(ok1 && ok2 && c > 0 && r > 0);
+    var out2: u8[>..] = [];
+    assert(ansi::terminal_size(out2) > 0);
 }
 
 fn main() {
@@ -489,6 +692,15 @@ fn main() {
     test_color_level();
     test_detect_rules();
     test_support_cases();
+    test_width_corpus();
+    test_strip_c1();
+    test_wrap_full();
+    test_open_osc_limit();
+    test_new_attributes();
+    test_style_parse();
+    test_styled();
+    test_override();
+    test_terminal();
     test_link();
     test_ellipsis();
     test_wrap();

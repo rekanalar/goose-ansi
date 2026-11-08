@@ -2,29 +2,32 @@
 
 [![ci](https://github.com/rekanalar/goose-ansi/actions/workflows/ci.yml/badge.svg)](https://github.com/rekanalar/goose-ansi/actions/workflows/ci.yml)
 
-Terminal styling for the [Goose](https://github.com/aardappel/goose) programming language: SGR sequences, colors, and width-aware measuring.
+Terminal styling for the [Goose](https://github.com/aardappel/goose) programming language: SGR sequences, colors, and width-aware measuring, and a terminal check.
 
 ## Features
 
-- Attributes: bold, dim, italic, underline, overline, hidden, reverse, strike.
+- Attributes: bold, dim, italic, underline, double underline, blink, fast blink, frame, encircle, overline, hidden, reverse, strike.
 - Colors: 8 and 16 colors, the 256-color palette, and 24-bit truecolor.
 - A foreground and a background for each color form, and an underline colour.
 - Colours from hex strings such as `#ff8800` and `f80`.
 - Colour levels 0 to 3, with a fall back from RGB to 256 and 16 colours.
 - A level function with the rules of chalk 6, for a stream that is or is not a terminal.
-- `strip` takes every CSI and OSC sequence. `len` and `truncate` measure styled text.
+- `strip` takes every CSI and OSC sequence, with the C1 forms. `len` and `truncate` measure styled text.
+- `len` follows the Unicode cluster rules: joined emoji, flags, keycaps and combining marks.
+- `style::style_parse` reads a style string such as `bold red on blue`, as `rich` does.
+- `is_tty` and `terminal_size` ask the real terminal. `set_override` forces a colour level.
 - `truncate_ellipsis` and `truncate_with` mark a cut.
-- `wrap` breaks lines and keeps the style and the link.
+- `wrap` and `wrap_full` break lines and keep the style and the link.
 - OSC 8 hyperlinks with a fall back to text and URL.
-- A width table from the Unicode EastAsianWidth data.
-- Pure Goose. No C code.
+- Width tables from the Unicode 18 data. A script rebuilds them.
+- A small C layer for the terminal check. It builds on Linux, macOS and Windows.
 
 ## Install
 
 Put this line in the root file of your program:
 
 ```goose
-import ansi from "rekanalar/goose-ansi@v0.4.0";
+import ansi from "rekanalar/goose-ansi@v1.0.0";
 ```
 
 The CI runs the gate on Linux, macOS and Windows. It uses Goose v2026.4
@@ -34,7 +37,7 @@ and v2026.3 on each.
 
 ```goose
 import std;
-import ansi from "rekanalar/goose-ansi@v0.4.0";
+import ansi from "rekanalar/goose-ansi@v1.0.0";
 
 fn main() {
     var line: u8[>..] = [];
@@ -65,8 +68,8 @@ fn main() {
 | `underline_rgb_at(out, text, r, g, b, level)`, `underline_color256_at(out, text, n, level)` | the underline colour lowered to the level |
 | `hex(out, text, s)`, `bg_hex`, `underline_hex` | the text in the colour of a hex string; give false for a bad string |
 | `hex_at(out, text, s, level)`, `bg_hex_at`, `underline_hex_at` | the same, lowered to the level |
-| `color_level()` | the level of the terminal, 0 to 3 |
-| `color_level_stream(is_tty)` | the level for a stream; reads the environment and the program arguments; the caller says whether it is a terminal |
+| `color_level()` | the level of stdout, 0 to 3; it asks the real stream |
+| `color_level_stream(is_tty)` | the level for a stream; reads the environment and the program arguments; the override wins |
 | `color_level_env(is_tty, env, flags)` | the level for a `ColorEnv` and a `ColorFlags`, by the rules of `supports-color` |
 | `read_color_env()`, `color_env_set(env, name, value)`, `empty_color_env()` | build a `ColorEnv` from the process or by hand |
 | `color_flags(args)` | the `--color` and `--no-color` flags of an argument list; an argument after `--` has no effect |
@@ -77,6 +80,16 @@ fn main() {
 | `truncate_ellipsis(out, s, width)` | s, or a cut of s that ends with U+2026 |
 | `truncate_with(out, s, width, tail)` | s, or a cut of s that ends with tail |
 | `wrap(out, s, width, hard)` | s broken into lines of at most width columns |
+| `wrap_full(out, s, width, hard, trim, word_wrap)` | the same with the options of `wrap-ansi`; `trim` drops the space at a break, `word_wrap` false breaks at the width |
+| `len_with(s, ambiguous_is_narrow, count_ansi)` | the width with the options of `string-width` |
+| `blink`, `blink2`, `underline2`, `frame`, `encircle` | the text with that attribute (SGR 5, 6, 21, 51, 52) |
+| `is_tty(fd)`, `is_tty_stdout()`, `is_tty_stderr()` | true when the descriptor is a terminal |
+| `terminal_size(out)`, `terminal_size_with(fd, out)` | writes `columns rows`; `COLUMNS` and `LINES` override; 80 and 25 when unknown |
+| `color_level_stdout()`, `color_level_stderr()` | the level of the real stream |
+| `set_override(level)`, `unset_override()`, `override_active()` | force the level, as `set_override` of `owo-colors` |
+| `style::style_parse(codes, spec)` | writes the SGR codes of a style string; gives 0, or -1 for a bad word |
+| `styled(out, text, spec)` | the text in a style string, with `rgb(r,g,b)`, `color(n)` and `link URL`; false for a bad string |
+| `style::style_link(url, spec)` | writes the url of a `link URL` word; gives 1, or 0 |
 | `link(out, text, url)` | an OSC 8 hyperlink |
 | `link_with(out, text, url, supported)` | a link, or "text (url)" |
 | `links_supported()` | true when the terminal takes OSC 8 |
@@ -121,20 +134,32 @@ not lower. Level 0 writes the plain text. `color_level_tty` takes text, so an em
 
 `color_level_stream(true)` is chalk `supportsColor` for a terminal.
 `color_level_stream(false)` is `supportsColorStderr` for a pipe. The two
-differ only by the terminal flag. The package has no terminal check, because
-the Goose standard library has none. The caller passes the flag.
+differ only by the terminal flag. `color_level_stdout()` and
+`color_level_stderr()` ask the real stream through the C layer.
 
 ## Limits
 
-- `color_level()` does not test for a tty. It assumes one. Use `color_level_stream` with the flag.
-- `color_level_tty` reads `TERM`, `COLORTERM`, `FORCE_COLOR` and `NO_COLOR` only, as in v0.3.0. `color_level_stream` and `color_level_env` read all the rules except the Windows release rule.
-- `NO_COLOR` gives level 0. chalk ignores it. `COLORTERM=24bit` gives level 3. chalk gives 1 for it.
+The references disagree in these places, and no standard decides. The package picks one behaviour and names it here.
+
+- Windows release rule. `chalk` reads the build number: 10586 gives level 2 and 14931 gives level 3. `rich` probes the console. Rust `supports-color` assumes ANSI from Windows 10 1511. The package has no Windows release rule.
+- Colour fall back. `chalk` uses `color-convert`. `rich` uses HLS, a grey test and a weighted distance. The package follows `chalk`.
+- Escape bytes in a width. `string-width` strips them. `rich` `cell_len` counts them. `len` strips. `len_with(s, true, true)` counts.
+- `NO_COLOR`. `chalk` ignores it. `rich` and Rust honor it. The package honors it. `COLORTERM=24bit` gives level 3; `chalk` gives 1.
+- Marks. `string-width` counts a lone mark outside its listed blocks as 1 column (U+05B0, U+093C). `rich` counts 0. The package counts 0, as Unicode General Category M does.
+- Text emoji. `string-width` counts a bare U+00A9, U+2714 or U+2764 as 2. `rich` counts 1. The package counts 1, as UTS 51 does for text presentation. U+FE0F, a joiner or a keycap makes it 2.
+- Colour names. `rich` has 235 xterm names. The package takes the 16 base names, the `bright_` forms, `#rrggbb`, `rgb(r,g,b)`, `color(n)` and `default`. `#rgb` is not a style colour.
+- A style string writes "on" codes only. `not bold` alone gives -1, because it writes no code. `rich` gives an empty style.
+- `rich` markup, the span model, tables and export are a text framework. They are out of scope.
+
+Other limits:
+
+- `color_level_tty` reads `TERM`, `COLORTERM`, `FORCE_COLOR` and `NO_COLOR` only. `color_level_stream` and `color_level_env` read all the rules except the Windows release rule.
 - `wrap` splits at spaces only. It does not break at hyphens.
-- `wrap` trims no space at the start of a line, except at a break.
 - `wrap` keeps the style as a list of SGR codes. An unusual code stays as is.
 - `links_supported()` knows a few terminals and `VTE_VERSION` 5000 or more.
 - The writers do not parse nested styles. Use `style` with several codes.
-- Width counts code points. It does not join emoji sequences.
+- The C1 controls count in their UTF-8 form (C2 9B, C2 9C, C2 9D). A lone byte 0x9B is not a control.
+- `terminal_size` reads stdout, then stderr, then stdin. It does not follow a resize.
 
 ## Hex strings and underline colours
 
@@ -150,11 +175,16 @@ The underline colour exists in chalk 6 (`underlineRgb`, `underlineHex`,
 
 ## Widths
 
-`len` and `truncate` count columns. A wide character takes two columns. The
-table comes from the EastAsianWidth.txt file of the Unicode Character
-Database. A malformed UTF-8 byte takes one column.
+`len` and `truncate` count columns of grapheme clusters. A wide character
+and an emoji take two columns. A combining mark, a control, a joiner, a
+variation selector and a zero width space take none. A flag pair, a keycap
+and a joined emoji family take two.
 
-`truncate` keeps the sequences it passes. It cuts between them. A cut of
+The tables come from the Unicode 18
+data. The script `scripts/build-width.py` rebuilds them. A malformed UTF-8
+byte takes one column.
+
+`truncate` keeps the sequences it passes. It cuts between clusters. A cut of
 styled text ends with the reset sequence. A cut inside a link closes the link.
 
 ## Test
@@ -164,6 +194,7 @@ goose run test/run.goose
 goose run test/run.goose --debug
 goose run examples/demo.goose
 goose run examples/detect.goose
+goose run examples/terminal.goose
 ```
 
 The file `test/chalk_cases.goose` holds 1207 cases from chalk 6.0.1. The script
@@ -172,6 +203,8 @@ with no chalk result. The script needs chalk 6.0.1 and Node.
 
 The file `test/support_cases.goose` holds 2566 cases for the level rules. The script
 `test/make_support_cases.mjs` makes them with the seed 20261107. It needs chalk 6.0.1 and Node.
+
+The tests also hold 42 width cases checked against `string-width` 7.2.0 and `rich` 15.0.0.
 
 ## License
 

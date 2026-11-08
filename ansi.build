@@ -1,0 +1,4 @@
+// The C part of the package. The file gives the terminal check and the
+// size of the terminal. It has no other library.
+c_sources = ["src/term.c"];
+c_include = ["src"];

@@ -1,95 +1,17 @@
 // Measuring styled text for the ansi package.
 //
-// The scanner walks the bytes once. It keeps the bytes that are not inside
-// an SGR sequence, and it counts the visible columns of the bytes it keeps.
+// The scanner walks the text once. It keeps the bytes that are not inside
+// an escape sequence, and it counts the visible columns of the clusters it
+// keeps.
 //
-// A column holds one narrow character or half of a wide one. The wide
-// characters are the East Asian Wide and Fullwidth ranges of Unicode. A
-// malformed UTF-8 byte counts one column.
+// A column holds one narrow character or half of a wide one. The width of
+// a cluster comes from the width model of the width module.
 
 namespace ansi;
 
 import std;
 import width;
-
-// strip writes s without its CSI and OSC sequences into out. An open
-// sequence with no end stays.
-fn strip(out: u8[>..]&, s: u8[:]) {
-    var i = 0;
-    while i < s.len {
-        let e = escape_end(s, i);
-        if e >= 0 {
-            i = e;
-            continue;
-        }
-        out.push(s[i]);
-        i += 1;
-    }
-}
-
-// len returns the visible length of s in columns. It skips the escape
-// sequences.
-fn len(s: u8[:]) -> i64 {
-    var text: u8[>..] = [];
-    strip(text, s);
-    var n = 0;
-    var i = 0;
-    while i < text.len {
-        let b = text[i];
-        if b < 0x80 {
-            n += 1;
-            i += 1;
-            continue;
-        }
-        let cp = decode_utf8(text, i);
-        var size = utf8_size(b);
-        if i + size > text.len { size = text.len - i; }
-        n += char_width(cp);
-        i += size;
-    }
-    return n;
-}
-
-// utf8_size returns the number of bytes of the UTF-8 sequence that starts
-// with the byte b. It returns 1 for a malformed byte.
-fn utf8_size(b: u8) -> i64 {
-    if b >= 0xF0 { return 4; }
-    if b >= 0xE0 { return 3; }
-    if b >= 0xC0 { return 2; }
-    return 1;
-}
-
-// decode_utf8 returns the code point of the sequence at i. A malformed
-// sequence gives U+FFFD.
-fn decode_utf8(s: u8[:], i: i64) -> i64 {
-    let size = utf8_size(s[i]);
-    if i + size > s.len { return 0xFFFD; }
-    if size == 1 {
-        if s[i] >= 0x80 { return 0xFFFD; }
-        return s[i];
-    }
-    // The bytes go into i64 values first. The shifts then keep their
-    // values, because a shift on a u8 would lose the high bits.
-    if size == 2 {
-        if (s[i] & 0xE0) != 0xC0 || (s[i + 1] & 0xC0) != 0x80 { return 0xFFFD; }
-        let a: i64 = s[i];
-        let b: i64 = s[i + 1];
-        return (a & 0x1F) << 6 | (b & 0x3F);
-    }
-    if size == 3 {
-        if (s[i] & 0xF0) != 0xE0 || (s[i + 1] & 0xC0) != 0x80 || (s[i + 2] & 0xC0) != 0x80 { return 0xFFFD; }
-        let a: i64 = s[i];
-        let b: i64 = s[i + 1];
-        let c: i64 = s[i + 2];
-        return (a & 0x0F) << 12 | (b & 0x3F) << 6 | (c & 0x3F);
-    }
-    if (s[i] & 0xF8) != 0xF0 || (s[i + 1] & 0xC0) != 0x80 || (s[i + 2] & 0xC0) != 0x80 || (s[i + 3] & 0xC0) != 0x80 { return 0xFFFD; }
-    let a: i64 = s[i];
-    let b: i64 = s[i + 1];
-    let c: i64 = s[i + 2];
-    let d: i64 = s[i + 3];
-    return (a & 0x07) << 18 | (b & 0x3F) << 12 | (c & 0x3F) << 6 | (d & 0x3F);
-}
+import escape;
 
 // truncate writes at most width columns of s into out. The sequences it
 // passes stay in place. A cut of styled text ends with the reset sequence,
@@ -117,26 +39,15 @@ fn truncate(out: u8[>..]&, s: u8[:], width: i64) {
             i = e;
             continue;
         }
-        if cut {
-            i += 1;
-            continue;
-        }
-        let b = s[i];
-        var size = 1;
-        var w = 1;
-        if b >= 0x80 {
-            let cp = decode_utf8(s, i);
-            size = utf8_size(b);
-            // A sequence cut at the end of the text has fewer bytes.
-            if i + size > s.len { size = s.len - i; }
-            w = char_width(cp);
-        }
+        var end = 0;
+        var w = 0;
+        cluster_scan(s, i, true, end, w);
         if columns + w > width {
             cut = true;
-            i += size;
+            i = end;
             continue;
         }
-        // The character is kept, so the sequences before it are kept too.
+        // The cluster is kept, so the sequences before it are kept too.
         if pending_start >= 0 {
             out.append(s[pending_start..pending_end]);
             pending_start = -1;
@@ -144,8 +55,8 @@ fn truncate(out: u8[>..]&, s: u8[:], width: i64) {
             pending_sgr = false;
         }
         columns += w;
-        out.append(s[i..i + size]);
-        i += size;
+        out.append(s[i..end]);
+        i = end;
     }
     if !cut && pending_start >= 0 { out.append(s[pending_start..pending_end]); }
     if cut && link_open { out.append("\x1b]8;;\x07"); }
