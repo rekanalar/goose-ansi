@@ -14,16 +14,34 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <stdlib.h>
 #include <windows.h>
 #else
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+// A bad descriptor makes the C runtime of Windows end the process. This
+// handler turns that into an error return.
+static void term_ignore(const wchar_t *a, const wchar_t *b, const wchar_t *c, unsigned d, uintptr_t e) {
+    (void)a; (void)b; (void)c; (void)d; (void)e;
+}
+
+static void term_guard(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    _set_invalid_parameter_handler(term_ignore);
+}
+#endif
+
 // term_is_tty gives 1 when the file descriptor is a terminal. It gives 0
 // for a pipe, for a file and for a bad descriptor.
 int64_t term_is_tty(int64_t fd) {
 #ifdef _WIN32
+    term_guard();
+    if (fd < 0 || fd > 1024) return 0;
     return _isatty((int)fd) ? 1 : 0;
 #else
     return isatty((int)fd) ? 1 : 0;
@@ -38,8 +56,10 @@ int64_t term_size(int64_t fd, gs_rref out) {
     int cols = 0;
     int rows = 0;
 #ifdef _WIN32
+    term_guard();
+    if (fd < 0 || fd > 1024) return 0;
     HANDLE handle = (HANDLE)_get_osfhandle((int)fd);
-    if (handle == INVALID_HANDLE_VALUE) return 0;
+    if (handle == (HANDLE)-1 || handle == INVALID_HANDLE_VALUE) return 0;
     CONSOLE_SCREEN_BUFFER_INFO info;
     if (!GetConsoleScreenBufferInfo(handle, &info)) return 0;
     cols = info.srWindow.Right - info.srWindow.Left + 1;
